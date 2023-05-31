@@ -47,7 +47,7 @@ jobs:
             git submodule update --recursive --init
       - docker/check:
           registry:  docker.cloudsmith.io
-          docker-username: CLOUDSMITH_API_USER[
+          docker-username: CLOUDSMITH_API_USER
           docker-password: CLOUDSMITH_API_KEY
       - cloudsmith/ensure-api-key
       - docker/pull:
