@@ -65,12 +65,12 @@ jobs:
             echo ==========================================================
             echo Build With CMake
             echo ==========================================================
-            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "cmake --build build/release --target install -- -j"
+            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "cmake --build build/release --target install -- -j2"
 
             echo ==========================================================
             echo Create .deb package
             echo ==========================================================
-            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install build-essential ruby cmake git -y && gem install fpm && ./tools/create_packages.sh ./install ./debian thread_$(uname -p)_${CIRCLE_BUILD_NUM} libmavsdk-dev"
+            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install build-essential ruby cmake git -y && git config --global --add safe.directory /workspace && gem install fpm && ./tools/create_packages.sh ./install ./debian thread_$(uname -p)_${CIRCLE_BUILD_NUM} libmavsdk-dev"
 
 
       - store_artifacts:
