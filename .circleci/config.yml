@@ -60,7 +60,7 @@ jobs:
             echo ==========================================================
             echo Install Build Tools
             echo =========================================================
-            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install build-essential ruby cmake git && gem -i fpm"
+            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install build-essential ruby cmake git -y && gem -i fpm"
 
             echo ==========================================================
             echo Configure CMake Build
