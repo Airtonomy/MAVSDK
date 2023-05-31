@@ -54,7 +54,7 @@ jobs:
           images: << parameters.docker-build-image >>
       - run: 
           name: Get Build Dependencies
-          config: |  
+          command: |  
             apt install build-essentials cmake git && sudo gem i fpm -f
       - run:
           name: Build Debian Package
