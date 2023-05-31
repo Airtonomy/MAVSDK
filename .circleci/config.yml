@@ -41,9 +41,12 @@ jobs:
       - checkout:
       - run: 
           name: Fetch and Sync submodules
-            command: | 
-              git submodule sync --recursive
-              git submodule update --recursive --init
+          command: | 
+            echo ==========================================================
+            echo Fetching Git Submodules
+            echo ==========================================================
+            git submodule sync --recursive
+            git submodule update --recursive --init
       - docker/check:
           registry:  docker.cloudsmith.io
           docker-username: CLOUDSMITH_API_USER
@@ -72,7 +75,7 @@ jobs:
             echo ==========================================================
             echo Create .deb package
             echo ==========================================================
-            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "./tools/create_packages.sh ./install . thread_$(uname -p)_${CIRCLE_BUILD_NUM} libmavsdk-dev"
+            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "./tools/create_packages.sh ./install ./debian thread_$(uname -p)_${CIRCLE_BUILD_NUM} libmavsdk-dev"
 
 
       - store_artifacts:
