@@ -36,7 +36,7 @@ jobs:
     resource_class: << parameters.resource_class >>
 
     steps:
-      - checkout:
+      - checkout
       - run: 
           name: Fetch and Sync submodules
           command: | 
@@ -54,6 +54,7 @@ jobs:
           images: << parameters.docker-build-image >>
       - run: 
           name: Get Build Dependencies
+          config: |  
             apt install build-essentials cmake git && sudo gem i fpm -f
       - run:
           name: Build Debian Package
