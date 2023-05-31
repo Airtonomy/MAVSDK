@@ -15,8 +15,6 @@ jobs:
       docker-build-image:
         type: string
         default: docker.cloudsmith.io/thread-one/release/flight_controller:latest
-        # Should we be pulling a different non__ros_ified devcontainer to build a pure-library?
-        # How would I create a devcontainer, as there are basic tools that would be required like build-essentials and fpm from ruby gems? 
       package-repo-org:
         type: string
         default: thread-one
