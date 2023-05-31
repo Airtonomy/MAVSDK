@@ -53,6 +53,10 @@ jobs:
       - docker/pull:
           images: << parameters.docker-build-image >>
       - run:
+          name: PreConfigure CMake 
+          command: |
+            sudo apt install cmake && FETCHCONTENT_UPDATES_DISCONNECTED
+      - run:
           name: Build Debian Package
           command: |
             # calling make debian within the docker to build the package for deployment
