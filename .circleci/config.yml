@@ -52,14 +52,15 @@ jobs:
       - cloudsmith/ensure-api-key
       - docker/pull:
           images: << parameters.docker-build-image >>
-      - run: 
-          name: Get Build Dependencies
-          command: |  
-            apt install build-essentials cmake git && sudo gem i fpm -f
       - run:
           name: Build Debian Package
           command: |
             # calling make debian within the docker to build the package for deployment
+            
+            echo ==========================================================
+            echo Install Build Tools
+            echo =========================================================
+            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "apt install build-essentials ruby cmake git && gem -i fpm"
 
             echo ==========================================================
             echo Configure CMake Build
