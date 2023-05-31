@@ -11,7 +11,7 @@ jobs:
     parameters:
       source-path:
         type: string
-        default: flight_wind_turbine
+        default: MAVSDK
       docker-build-image:
         type: string
         default: docker.cloudsmith.io/thread-one/release/flight_controller:latest
