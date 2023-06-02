@@ -94,4 +94,19 @@ workflows:
             parameters:
               resource_class: [arm.xlarge, large] #amd packaging blocked by mavros
           context:
-            - cloudsmith-creds     
+            - cloudsmith-creds
+          filters:
+            branches:
+              ignore: main
+  release:
+    jobs:
+      - package: 
+          matrix:
+            parameters:
+              resource_class: [arm.xlarge, large]
+          package-repo: "public" # after conversation with Aaron, I believe the method was to push public, since the repo is public anyway
+          context:
+            - cloudsmith-creds
+          filters:
+            branches:
+              only: main
