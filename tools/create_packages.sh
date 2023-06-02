@@ -5,7 +5,7 @@ set -e
 echo "Packaging"
 echo "---------"
 
-if [ "$#" -ne 4 ]; then
+if [ "$#" -ne 5 ]; then
   echo "Error: missing path to the 'install' directory (i.e. what was specified as -DCMAKE_INSTALL_PREFIX)" >&2
   echo "       or output path (where the package will be generated)!" >&2
   echo "Usage: $0 <path/to/install> <output/path> <architecture> <name>" >&2
@@ -17,6 +17,7 @@ install_dir=$1
 output_dir=$2
 arch="$3"
 name="$4"
+version_suffix="$5"
 
 # The package architecture needs to be armhf, at least for RPi.
 if [ "$arch" = "armv6" ] || [ "$arch" = "armv7" ]; then
@@ -45,7 +46,7 @@ echo "/sbin/ldconfig" >> ${working_dir}/run_ldconfig
 common_args="--chdir ${working_dir}/install \
              --input-type dir  \
              --name ${name} \
-             --version ${version} \
+             --version ${version}-${version_suffix} \
              --maintainer julian@oes.ch \
              --url https://mavsdk.mavlink.io \
              --license BSD-3-Clause \
