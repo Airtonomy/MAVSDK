@@ -26,13 +26,10 @@ else()
         set(warnings "-Wall -Wextra -Wshadow -Wno-strict-aliasing -Wold-style-cast -Wdouble-promotion")
     else()
         add_definitions(-fno-exceptions)
-        set(warnings "-Wall -Wextra -Wshadow -Wno-strict-aliasing -Wold-style-cast -Wdouble-promotion -Wformat=2")
+        set(warnings "-Wall -Wextra -Wshadow -Wno-strict-aliasing -Wold-style-cast -Wdouble-promotion -Wformat=2 -Wno-address-of-packed-member")
         if (WERROR)
             set(warnings "${warnings} -Werror")
         endif()
-
-        # Allow #pragma GCC diagnostic ignored "-Wstringop-truncation"
-        set(warnings "${warnings} -Wno-pragmas -Wno-unknown-warning-option")
     endif()
 
 
@@ -52,6 +49,10 @@ else()
         endif()
 
         set(warnings "${warnings} -Wlogical-op")
+
+        # MAVLink warnings
+        set(warnings "${warnings} -Wno-address-of-packed-member")
+
     elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         set(warnings "${warnings} -Wno-missing-braces -Wno-unused-lambda-capture")
     elseif(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")

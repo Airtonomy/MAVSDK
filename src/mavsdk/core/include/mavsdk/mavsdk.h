@@ -2,6 +2,7 @@
 
 #include <string>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <functional>
 
@@ -94,6 +95,35 @@ public:
         ForwardingOption forwarding_option = ForwardingOption::ForwardingOff);
 
     /**
+     * @brief Handle type to remove a connection.
+     */
+    using ConnectionHandle = Handle<>;
+
+    /**
+     * @brief Adds Connection via URL Additionally returns a handle to remove
+     *        the connection later.
+     *
+     * Supports connection: Serial, TCP or UDP.
+     * Connection URL format should be:
+     * - UDP:    udp://[host][:bind_port]
+     * - TCP:    tcp://[host][:remote_port]
+     * - Serial: serial://dev_node[:baudrate]
+     *
+     * For UDP, the host can be set to either:
+     *   - zero IP: 0.0.0.0 -> behave like a server and listen for heartbeats.
+     *   - some IP: 192.168.1.12 -> behave like a client, initiate connection
+     *     and start sending heartbeats.
+     *
+     * @param connection_url connection URL string.
+     * @param forwarding_option message forwarding option (when multiple interfaces are used).
+     * @return A pair containing the result of adding the connection as well
+     *         as a handle to remove it later.
+     */
+    std::pair<ConnectionResult, ConnectionHandle> add_any_connection_with_handle(
+        const std::string& connection_url,
+        ForwardingOption forwarding_option = ForwardingOption::ForwardingOff);
+
+    /**
      * @brief Adds a UDP connection to the specified port number.
      *
      * Any incoming connections are accepted (0.0.0.0).
@@ -166,11 +196,32 @@ public:
         ForwardingOption forwarding_option = ForwardingOption::ForwardingOff);
 
     /**
+     * Remove connection again.
+     *
+     * @param handle Handle returned when connection was added.
+     */
+    void remove_connection(ConnectionHandle handle);
+
+    /**
      * @brief Get a vector of systems which have been discovered or set-up.
      *
      * @return The vector of systems which are available.
      */
     std::vector<std::shared_ptr<System>> systems() const;
+
+    /**
+     * @brief Get the first autopilot that has been discovered.
+     *
+     * @note This requires a MAVLink component with component ID 1 sending
+     *       heartbeats.
+     *
+     * @param timeout_s A timeout in seconds.
+     *                  A timeout of 0 will not wait and return immediately.
+     *                  A negative timeout will wait forever.
+     *
+     * @return A system or nothing if nothing was discovered within the timeout.
+     */
+    std::optional<std::shared_ptr<System>> first_autopilot(double timeout_s) const;
 
     /**
      * @brief Possible configurations.
@@ -303,15 +354,16 @@ public:
      *
      * This gets called whenever a system is added.
      *
-     * @note Only one subscriber is possible at any time. On a second
-     * subscription, the previous one is overwritten. To unsubscribe, pass nullptr;
-     *
      * @param callback Callback to subscribe.
+     *
+     * @return A handle to unsubscribe again.
      */
     NewSystemHandle subscribe_on_new_system(const NewSystemCallback& callback);
 
     /**
      * @brief unsubscribe from subscribe_on_new_system.
+     *
+     * @param handle Handle received on subscription.
      */
     void unsubscribe_on_new_system(NewSystemHandle handle);
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -8,6 +9,7 @@
 
 #include "call_every_handler.h"
 #include "connection.h"
+#include "handle.h"
 #include "mavsdk.h"
 #include "mavlink_include.h"
 #include "mavlink_address.h"
@@ -51,21 +53,25 @@ public:
     void receive_message(mavlink_message_t& message, Connection* connection);
     bool send_message(mavlink_message_t& message);
 
-    ConnectionResult
+    std::pair<ConnectionResult, Mavsdk::ConnectionHandle>
     add_any_connection(const std::string& connection_url, ForwardingOption forwarding_option);
-    ConnectionResult add_udp_connection(
+    std::pair<ConnectionResult, Mavsdk::ConnectionHandle> add_udp_connection(
         const std::string& local_ip, int local_port_number, ForwardingOption forwarding_option);
-    ConnectionResult add_tcp_connection(
+    std::pair<ConnectionResult, Mavsdk::ConnectionHandle> add_tcp_connection(
         const std::string& remote_ip, int remote_port, ForwardingOption forwarding_option);
-    ConnectionResult add_serial_connection(
+    std::pair<ConnectionResult, Mavsdk::ConnectionHandle> add_serial_connection(
         const std::string& dev_path,
         int baudrate,
         bool flow_control,
         ForwardingOption forwarding_option);
-    ConnectionResult setup_udp_remote(
+    std::pair<ConnectionResult, Mavsdk::ConnectionHandle> setup_udp_remote(
         const std::string& remote_ip, int remote_port, ForwardingOption forwarding_option);
 
+    void remove_connection(Mavsdk::ConnectionHandle handle);
+
     std::vector<std::shared_ptr<System>> systems() const;
+
+    std::optional<std::shared_ptr<System>> first_autopilot(double timeout_s);
 
     void set_configuration(Mavsdk::Configuration new_configuration);
     Mavsdk::Configuration get_configuration() const;
@@ -104,9 +110,8 @@ public:
     Time time{};
 
 private:
-    void add_connection(const std::shared_ptr<Connection>&);
-    void make_system_with_component(
-        uint8_t system_id, uint8_t component_id, bool always_connected = false);
+    Mavsdk::ConnectionHandle add_connection(const std::shared_ptr<Connection>&);
+    void make_system_with_component(uint8_t system_id, uint8_t component_id);
 
     void work_thread();
     void process_user_callbacks_thread();
@@ -118,7 +123,12 @@ private:
     static uint8_t get_target_component_id(const mavlink_message_t& message);
 
     std::mutex _connections_mutex{};
-    std::vector<std::shared_ptr<Connection>> _connections{};
+    uint64_t _connections_handle_id{1};
+    struct ConnectionEntry {
+        std::shared_ptr<Connection> connection;
+        Handle<> handle;
+    };
+    std::vector<ConnectionEntry> _connections{};
 
     mutable std::recursive_mutex _systems_mutex{};
     std::vector<std::pair<uint8_t, std::shared_ptr<System>>> _systems{};
@@ -154,6 +164,7 @@ private:
     bool _message_logging_on{false};
     bool _callback_debugging{false};
 
+    mutable std::mutex _intercept_callback_mutex{};
     std::function<bool(mavlink_message_t&)> _intercept_incoming_messages_callback{nullptr};
     std::function<bool(mavlink_message_t&)> _intercept_outgoing_messages_callback{nullptr};
 

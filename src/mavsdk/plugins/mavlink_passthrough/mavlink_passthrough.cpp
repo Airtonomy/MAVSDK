@@ -39,6 +39,18 @@ mavlink_message_t MavlinkPassthrough::make_command_ack_message(
     return _impl->make_command_ack_message(target_sysid, target_compid, command, result);
 }
 
+std::pair<MavlinkPassthrough::Result, int32_t> MavlinkPassthrough::get_param_int(
+    const std::string& name, std::optional<uint8_t> maybe_component_id, bool extended)
+{
+    return _impl->get_param_int(name, maybe_component_id, extended);
+}
+
+std::pair<MavlinkPassthrough::Result, float> MavlinkPassthrough::get_param_float(
+    const std::string& name, std::optional<uint8_t> maybe_component_id, bool extended)
+{
+    return _impl->get_param_float(name, maybe_component_id, extended);
+}
+
 MavlinkPassthrough::MessageHandle
 MavlinkPassthrough::subscribe_message(uint16_t message_id, const MessageCallback& callback)
 {
@@ -61,6 +73,30 @@ std::ostream& operator<<(std::ostream& str, MavlinkPassthrough::Result const& re
             return str << "Success";
         case MavlinkPassthrough::Result::ConnectionError:
             return str << "Connection Error";
+        case MavlinkPassthrough::Result::CommandNoSystem:
+            return str << "CommandNoSystem";
+        case MavlinkPassthrough::Result::CommandBusy:
+            return str << "CommandBusy";
+        case MavlinkPassthrough::Result::CommandDenied:
+            return str << "CommandDenied";
+        case MavlinkPassthrough::Result::CommandUnsupported:
+            return str << "CommandUnsupported";
+        case MavlinkPassthrough::Result::CommandTimeout:
+            return str << "CommandTimeout";
+        case MavlinkPassthrough::Result::CommandTemporarilyRejected:
+            return str << "CommandTemporarilyRejected";
+        case MavlinkPassthrough::Result::CommandFailed:
+            return str << "CommandFailed";
+        case MavlinkPassthrough::Result::ParamWrongType:
+            return str << "ParamWrongType";
+        case MavlinkPassthrough::Result::ParamNameTooLong:
+            return str << "ParamNameTooLong";
+        case MavlinkPassthrough::Result::ParamValueTooLong:
+            return str << "ParamValueTooLong";
+        case MavlinkPassthrough::Result::ParamNotFound:
+            return str << "ParamNotFound";
+        case MavlinkPassthrough::Result::ParamValueUnsupported:
+            return str << "ParamValueUnsupported";
     }
 }
 
