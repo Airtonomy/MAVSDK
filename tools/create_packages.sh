@@ -36,7 +36,8 @@ echo "Files to be packaged:"
 echo ${library_files}
 
 # This creates a version such as "v1.2.3-5-g123abc".
-version=`git describe --always --tags`
+# method from https://gist.github.com/rponte/fdc0724dd984088606b0?permalink_comment_id=3266206#gistcomment-3266206
+version=`git describe --tags $(git rev-list --tags --max-count=1)`
 # We want to extract 1.2.3 from it.
 version=`echo ${version} | sed 's/v\([0-9]*\.[0-9]*\.[0-9]*\).*$/\1/'`
 
