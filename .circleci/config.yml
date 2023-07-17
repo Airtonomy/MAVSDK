@@ -60,7 +60,7 @@ jobs:
             echo ==========================================================
             echo Configure CMake Build
             echo ==========================================================
-            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install cmake git -y && apt-get install libmavsdk-dev=1.4.16-atm-1-ge062d7e4-thread-8250b24a-8592-43b0-a088-6093f33a66fb && git config --global --add safe.directory /workspace && cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_MAVSDK_SERVER=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=install -DWERROR=OFF -Bbuild/release -H."
+            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install cmake git -y && git config --global --add safe.directory /workspace && cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_MAVSDK_SERVER=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=install -DWERROR=OFF -Bbuild/release -H."
 
             echo ==========================================================
             echo Build With CMake
