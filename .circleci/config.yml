@@ -60,7 +60,7 @@ jobs:
             echo ==========================================================
             echo Create Intermediate Docker with required packages
             echo ==========================================================
-            docker run << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install -y build-essential debhelper fakeroot libjsoncpp-dev libcurl4-openssl-dev libtinyxml2-dev libjsoncpp1 libcurl4 libtinyxml2-6a && git config --global --add safe.directory /workspace /workspace/src"
+            docker run << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install -y build-essential debhelper fakeroot libjsoncpp-dev libcurl4-openssl-dev libtinyxml2-dev libjsoncpp1 libcurl4 libtinyxml2-6a && git config --global --add safe.directory /workspace"
 
             echo ==========================================================
             echo Create New Commit 
