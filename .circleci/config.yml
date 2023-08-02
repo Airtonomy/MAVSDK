@@ -14,7 +14,7 @@ jobs:
         default: MAVSDK
       docker-build-image:
         type: string
-        default: docker.cloudsmith.io/thread-one/release/flight_controller:latest
+        default: docker.cloudsmith.io/thread-one/release/flight-developer:23.25.1019
       package-repo-org:
         type: string
         default: thread-one
@@ -53,25 +53,37 @@ jobs:
       - docker/pull:
           images: << parameters.docker-build-image >>
       - run:
-          name: Build Debian Package
+          name: Create Builder Image
           command: |
             # calling make debian within the docker to build the package for deployment
             
             echo ==========================================================
-            echo Configure CMake Build
+            echo Create Intermediate Docker with required packages
             echo ==========================================================
-            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install cmake git -y && cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_MAVSDK_SERVER=OFF -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=install -DWERROR=OFF -Bbuild/release -H."
+            docker run << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install -y build-essential debhelper fakeroot libjsoncpp-dev libcurl4-openssl-dev libtinyxml2-dev libjsoncpp1 libcurl4 libtinyxml2-6a && git config --global --add safe.directory /workspace /workspace/src"
 
             echo ==========================================================
-            echo Build With CMake
+            echo Create New Commit 
             echo ==========================================================
-            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "cmake --build build/release --target install -- -j2"
+            docker commit $(docker ps -lq) builder_image 
+            
+            echo ==========================================================
+            echo Download and build mavlink
+            echo ==========================================================
+            docker run -v `pwd`:/workspace/src -w /workspace/src  builder_image /bin/bash -c "cmake -Bthird_party/mavlink/build -Sthird_party/mavlink; cmake --build third_party/mavlink/build"
 
             echo ==========================================================
-            echo Create .deb package
+            echo Generate ChangeLog
             echo ==========================================================
-            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install build-essential ruby cmake git -y && git config --global --add safe.directory /workspace && gem install fpm && ./tools/create_packages.sh ./install ./debian $(uname -m | sed s/aarch64/arm64/ | sed s/x86_64/amd64/) libmavsdk-dev thread-${CIRCLE_WORKFLOW_ID}"
+            docker run -v `pwd`:/workspace/src -w /workspace/src  builder_image /bin/bash -c "git config --global --add safe.directory /workspace/src && ./tools/generate_debian_changelog.sh > debian/changelog"
 
+
+            echo ==========================================================
+            echo Build Debian Pkgs
+            echo ==========================================================
+            # note we need to move /workspace *./deb into the /workspace/src/debian since that's volume-mounted onto the system
+            docker run -v `pwd`:/workspace/src -w /workspace/src  builder_image /bin/bash -c "dpkg-buildpackage -us -uc -b && mv workspace/*.deb /workspace/src/debian/"
+            # may need to update remote for this one
 
       - store_artifacts:
           path: dist  
@@ -92,7 +104,7 @@ workflows:
       - package:
           matrix:
             parameters:
-              resource_class: [arm.xlarge, large] #amd packaging blocked by mavros
+              resource_class: [arm.xlarge, large]
           context:
             - cloudsmith-creds
           filters:
@@ -104,7 +116,7 @@ workflows:
           matrix:
             parameters:
               resource_class: [arm.xlarge, large]
-          package-repo: "public" # after conversation with Aaron, I believe the method was to push public, since the repo is public anyway
+          package-repo: "public" 
           context:
             - cloudsmith-creds
           filters:
