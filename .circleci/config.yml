@@ -82,7 +82,7 @@ jobs:
             echo Build Debian Pkgs
             echo ==========================================================
             # note we need to move /workspace *./deb into the /workspace/src/debian since that's volume-mounted onto the system
-            docker run -v `pwd`/pro:/workspace/src -w /workspace/src  builder_image /bin/bash -c "dpkg-buildpackage -us -uc -b && mv workspace/*.deb /workspace/src/debian/"
+            docker run -v `pwd`:/workspace/src -w /workspace/src  builder_image /bin/bash -c "dpkg-buildpackage -us -uc -b && mv workspace/*.deb /workspace/src/debian/"
 
       - store_artifacts:
           path: dist  
