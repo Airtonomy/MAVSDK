@@ -61,7 +61,7 @@ jobs:
             echo Really large build command
             echo ==========================================================
             # FIXME: Not doing one big line caused problems, investigate later for piecemeal configuration and building
-            docker run v ~/.ssh/:/root/.ssh -v $SSH_AUTH_SOCK:/ssh-agent --env SSH_AUTH_SOCK=/ssh-agent -v `pwd`:/workspace/src -w /workspace/src  << parameters.docker-build-image >> /bin/bash -c "\
+            docker run -v ~/.ssh/:/root/.ssh -v $SSH_AUTH_SOCK:/ssh-agent --env SSH_AUTH_SOCK=/ssh-agent -v `pwd`:/workspace/src -w /workspace/src  << parameters.docker-build-image >> /bin/bash -c "\
             apt-get update && apt-get install -y build-essential debhelper fakeroot libjsoncpp-dev libcurl4-openssl-dev libtinyxml2-dev libjsoncpp1 libcurl4 libtinyxml2-6a && cmake -Bthird_party/mavlink/build -Sthird_party/mavlink; cmake --build third_party/mavlink/build && git config --global --add safe.directory /workspace/src && ./tools/generate_debian_changelog.sh > ./debian/changelog && dpkg-buildpackage -us -uc -b && mv /workspace/*.deb /workspace/src/debian/"
 
       - store_artifacts:
