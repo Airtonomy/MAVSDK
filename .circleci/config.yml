@@ -75,14 +75,14 @@ jobs:
             echo ==========================================================
             echo Generate ChangeLog
             echo ==========================================================
-            docker run -v ~/.ssh/:/root/.ssh -v $SSH_AUTH_SOCK:/ssh-agent --env SSH_AUTH_SOCK=/ssh-agent -v `pwd`:/workspace/src -w /workspace/src  builder_image /bin/bash -c "git config --global --add safe.directory /workspace/src && ./tools/generate_debian_changelog.sh"
+            docker run -v ~/.ssh/:/root/.ssh -v $SSH_AUTH_SOCK:/ssh-agent --env SSH_AUTH_SOCK=/ssh-agent -v `pwd`:/workspace/src -w /workspace/src  builder_image /bin/bash -c "git config --global --add safe.directory /workspace/src && ./tools/generate_debian_changelog.sh > ./debian/changelog"
 
 
             echo ==========================================================
             echo Build Debian Pkgs
             echo ==========================================================
             # note we need to move /workspace *./deb into the /workspace/src/debian since that's volume-mounted onto the system
-            docker run -v `pwd`:/workspace/src -w /workspace/src  builder_image /bin/bash -c "dpkg-buildpackage -us -uc -b && mv workspace/*.deb /workspace/src/debian/"
+            docker run -v `pwd`/pro:/workspace/src -w /workspace/src  builder_image /bin/bash -c "dpkg-buildpackage -us -uc -b && mv workspace/*.deb /workspace/src/debian/"
 
       - store_artifacts:
           path: dist  
