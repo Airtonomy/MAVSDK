@@ -27,9 +27,12 @@ jobs:
       package-distribution:
         type: string
         default: ubuntu/focal
-      package-path:
+      deb-libmavsdk-dev: 
         type: string
-        default: debian/*.deb
+        default: debian/libmavsdk-dev*.deb
+      deb-libmavsdk0:
+        type: string
+        default: debian/libmavsdk0*.deb
       resource_class:
         description: The architecture and size of the machine
         type: string
@@ -68,11 +71,20 @@ jobs:
           path: dist  
 
       - cloudsmith/install-cli
+      # Cloudsmith uses *.file_ext to negate debian naming conventions, not to push multiple packages it seems? 
+      # EX: Error: Got unexpected extra argument (/home/circleci/project/debian/libmavsdk-dev_0v13a5c37a-1_arm64.deb)
       - cloudsmith/publish:
           cloudsmith-repository:  << parameters.package-repo-org >>/<< parameters.package-repo >>
           package-format: << parameters.package-format >>
           package-distribution: << parameters.package-distribution >>
-          package-path: ~/project/<< parameters.package-path >>
+          package-path: ~/project/<< parameters.deb-libmavsdk-dev >>
+
+      - cloudsmith/publish:
+          cloudsmith-repository:  << parameters.package-repo-org >>/<< parameters.package-repo >>
+          package-format: << parameters.package-format >>
+          package-distribution: << parameters.package-distribution >>
+          package-path: ~/project/<< parameters.deb-libmavsdk0 >>
+
       - store_test_results:
           path: test_results
       - store_artifacts:
