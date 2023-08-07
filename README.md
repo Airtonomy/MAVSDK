@@ -54,9 +54,12 @@ This project is licensed under the permissive BSD 3-clause, see [LICENSE.md](LIC
 ## Creating a Debian Package
 To create a **debian** package for easy distribution via an `APT` package manager, perform the following steps. 
 
+- I reccomend building a mavsdk container with `cd docker && docker build -t mavsdk:ubuntu20_04 -f ./Dockerfile-Ubuntu-20.04 .`
+  - Depending on your network environment, you may need to also add `--network=host` after `docker build` 
+
 1. Update and install necessary dependencies with
 ```bash
-apt-get update && apt-get install -y build-essential debhelper fakeroot libjsoncpp-dev libcurl4-openssl-dev libtinyxml2-dev libjsoncpp1 libcurl4 libtinyxml2-6a 
+apt-get update && apt-get install -y cmake build-essential debhelper fakeroot libjsoncpp-dev libcurl4-openssl-dev libtinyxml2-dev libjsoncpp1 libcurl4 libtinyxml2-6a 
 ```
 2. Pull down `MAVLINK` and build with `cmake -Bthird_party/mavlink/build -Sthird_party/mavlink; cmake --build third_party/mavlink/build`
 3. Generate the `debian/changelog` with `./tools/generate_debian_changelog > ./debian/changelog`
