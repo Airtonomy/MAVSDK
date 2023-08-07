@@ -49,3 +49,21 @@ Quick Links:
 ## License
 
 This project is licensed under the permissive BSD 3-clause, see [LICENSE.md](LICENSE.md).
+
+
+## Creating a Debian Package
+To create a **debian** package for easy distribution via an `APT` package manager, perform the following steps. 
+
+1. Update and install necessary dependencies with
+```bash
+apt-get update && apt-get install -y build-essential debhelper fakeroot libjsoncpp-dev libcurl4-openssl-dev libtinyxml2-dev libjsoncpp1 libcurl4 libtinyxml2-6a 
+```
+2. Pull down `MAVLINK` and build with `cmake -Bthird_party/mavlink/build -Sthird_party/mavlink; cmake --build third_party/mavlink/build`
+3. Generate the `debian/changelog` with `./tools/generate_debian_changelog > ./debian/changelog`
+4. Run `dpkg-buildpackage -us -uc -b` in the source directory of the repo.
+5. Locate the generated `.deb` files, with one created for `libmavsdk-dev*.deb` and `libmavsdk0*.deb`. 
+6. Upload these manually to your repo of choice. 
+
+### TODO
+- Automate the process of building and distributing packages in a useful way to repository
+- Determine whether manually creating packages and publishing is succesful
