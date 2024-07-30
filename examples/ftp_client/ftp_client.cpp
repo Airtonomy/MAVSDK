@@ -47,14 +47,6 @@ void usage(const std::string& bin_name)
         << " 3 : Files are different (cmp command)\n";
 }
 
-Ftp::Result reset_server(Ftp& ftp)
-{
-    auto prom = std::promise<Ftp::Result>{};
-    auto future_result = prom.get_future();
-    ftp.reset_async([&prom](Ftp::Result result) { prom.set_value(result); });
-    return future_result.get();
-}
-
 Ftp::Result create_directory(Ftp& ftp, const std::string& path)
 {
     std::cerr << "Creating directory: " << path << '\n';
@@ -78,22 +70,16 @@ Ftp::Result remove_file(Ftp& ftp, const std::string& path)
 Ftp::Result remove_directory(Ftp& ftp, const std::string& path, bool recursive = true)
 {
     if (recursive) {
-        auto prom = std::promise<std::pair<Ftp::Result, std::vector<std::string>>>{};
+        auto prom = std::promise<std::pair<Ftp::Result, Ftp::ListDirectoryData>>{};
         auto future_result = prom.get_future();
-        ftp.list_directory_async(path, [&prom](Ftp::Result result, std::vector<std::string> list) {
-            prom.set_value(std::pair<Ftp::Result, std::vector<std::string>>(result, list));
+        ftp.list_directory_async(path, [&prom](Ftp::Result result, auto data) {
+            prom.set_value(std::pair(result, data));
         });
 
-        std::pair<Ftp::Result, std::vector<std::string>> result = future_result.get();
+        auto result = future_result.get();
         if (result.first == Ftp::Result::Success) {
-            for (auto entry : result.second) {
-                if (entry[0] == 'D') {
-                    remove_directory(ftp, path + "/" + entry.substr(1, entry.size() - 1));
-                } else if (entry[0] == 'F') {
-                    auto i = entry.find('\t');
-                    std::string name = entry.substr(1, i - 1);
-                    remove_file(ftp, path + "/" + name);
-                }
+            for (auto entry : result.second.dirs) {
+                remove_directory(ftp, path + "/" + entry.substr(1, entry.size() - 1));
             }
         }
     }
@@ -109,15 +95,20 @@ Ftp::Result remove_directory(Ftp& ftp, const std::string& path, bool recursive =
 Ftp::Result list_directory(Ftp& ftp, const std::string& path)
 {
     std::cerr << "List directory: " << path << '\n';
-    auto prom = std::promise<std::pair<Ftp::Result, std::vector<std::string>>>{};
+    auto prom = std::promise<std::pair<Ftp::Result, Ftp::ListDirectoryData>>{};
     auto future_result = prom.get_future();
-    ftp.list_directory_async(path, [&prom](Ftp::Result result, std::vector<std::string> list) {
-        prom.set_value(std::pair<Ftp::Result, std::vector<std::string>>(result, list));
+    ftp.list_directory_async(path, [&prom](Ftp::Result result, Ftp::ListDirectoryData data) {
+        prom.set_value(std::pair(result, data));
     });
 
-    std::pair<Ftp::Result, std::vector<std::string>> result = future_result.get();
+    auto result = future_result.get();
     if (result.first == Ftp::Result::Success) {
-        for (auto entry : result.second) {
+        std::cerr << "Directories: " << '\n';
+        for (auto entry : result.second.dirs) {
+            std::cerr << entry << '\n';
+        }
+        std::cerr << "Files: " << '\n';
+        for (auto entry : result.second.files) {
             std::cerr << entry << '\n';
         }
     }
@@ -131,7 +122,10 @@ download_file(Ftp& ftp, const std::string& remote_file_path, const std::string& 
     auto prom = std::promise<Ftp::Result>{};
     auto future_result = prom.get_future();
     ftp.download_async(
-        remote_file_path, local_path, [&prom](Ftp::Result result, Ftp::ProgressData progress) {
+        remote_file_path,
+        local_path,
+        false,
+        [&prom](Ftp::Result result, Ftp::ProgressData progress) {
             if (result == Ftp::Result::Next) {
                 int percentage = progress.total_bytes > 0 ?
                                      progress.bytes_transferred * 100 / progress.total_bytes :
@@ -191,7 +185,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    Mavsdk mavsdk;
+    Mavsdk mavsdk{Mavsdk::Configuration{Mavsdk::ComponentType::GroundStation}};
     ConnectionResult connection_result = mavsdk.add_any_connection(argv[1]);
 
     if (connection_result != ConnectionResult::Success) {
@@ -215,13 +209,6 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    Ftp::Result res;
-    res = reset_server(ftp);
-    if (res != Ftp::Result::Success) {
-        std::cerr << "Reset server error: " << res << '\n';
-        return 1;
-    }
-
     std::string command = argv[3];
 
     if (command == "put") {
@@ -229,7 +216,7 @@ int main(int argc, char** argv)
             usage(argv[0]);
             return 1;
         }
-        res = upload_file(ftp, argv[4], argv[5]);
+        auto res = upload_file(ftp, argv[4], argv[5]);
         if (res == Ftp::Result::Success) {
             std::cerr << "File uploaded.\n";
         } else {
@@ -241,7 +228,7 @@ int main(int argc, char** argv)
             usage(argv[0]);
             return 1;
         }
-        res = download_file(ftp, argv[4], (argc == 6) ? argv[5] : ".");
+        auto res = download_file(ftp, argv[4], (argc == 6) ? argv[5] : ".");
         if (res == Ftp::Result::Success) {
             std::cerr << "File downloaded.\n";
         } else {
@@ -253,7 +240,7 @@ int main(int argc, char** argv)
             usage(argv[0]);
             return 1;
         }
-        res = rename_file(ftp, argv[4], argv[5]);
+        auto res = rename_file(ftp, argv[4], argv[5]);
         if (res == Ftp::Result::Success) {
             std::cerr << "File renamed.\n";
         } else {
@@ -265,7 +252,7 @@ int main(int argc, char** argv)
             usage(argv[0]);
             return 1;
         }
-        res = create_directory(ftp, argv[4]);
+        auto res = create_directory(ftp, argv[4]);
         if (res == Ftp::Result::Success) {
             std::cerr << "Directory created.\n";
         } else if (res == Ftp::Result::FileExists) {
@@ -289,7 +276,7 @@ int main(int argc, char** argv)
                 recursive = true;
             }
         }
-        res = remove_directory(ftp, path, recursive);
+        auto res = remove_directory(ftp, path, recursive);
         if (res == Ftp::Result::Success) {
             std::cerr << "Directory removed.\n";
         } else if (res == Ftp::Result::FileDoesNotExist) {
@@ -304,7 +291,7 @@ int main(int argc, char** argv)
             usage(argv[0]);
             return 1;
         }
-        res = list_directory(ftp, argv[4]);
+        auto res = list_directory(ftp, argv[4]);
         if (res == Ftp::Result::Success) {
             std::cerr << "Directory listed.\n";
         } else if (res == Ftp::Result::FileDoesNotExist) {
@@ -319,7 +306,7 @@ int main(int argc, char** argv)
             usage(argv[0]);
             return 1;
         }
-        res = remove_file(ftp, argv[4]);
+        auto res = remove_file(ftp, argv[4]);
         if (res == Ftp::Result::Success) {
             std::cerr << "File deleted.\n";
         } else if (res == Ftp::Result::FileDoesNotExist) {

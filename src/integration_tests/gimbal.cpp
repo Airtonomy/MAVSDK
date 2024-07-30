@@ -19,13 +19,13 @@ void gimbal_pattern(std::shared_ptr<Gimbal> gimbal);
 void send_gimbal_roi_location(
     std::shared_ptr<Gimbal> gimbal, double latitude_deg, double longitude_deg, float altitude_m);
 void receive_gimbal_result(Gimbal::Result result);
-void receive_gimbal_attitude_euler_angles(Telemetry::EulerAngle euler_angle);
+void receive_gimbal_attitude(Gimbal::Attitude attitude);
 
 TEST(SitlTestGimbal, GimbalMove)
 {
-    Mavsdk mavsdk;
+    Mavsdk mavsdk{Mavsdk::Configuration{Mavsdk::ComponentType::GroundStation}};
 
-    ConnectionResult ret = mavsdk.add_udp_connection();
+    ConnectionResult ret = mavsdk.add_any_connection("udpin://0.0.0.0:14540");
     ASSERT_EQ(ret, ConnectionResult::Success);
 
     // Wait for system to connect via heartbeat.
@@ -38,12 +38,9 @@ TEST(SitlTestGimbal, GimbalMove)
     // ASSERT_TRUE(system.has_gimbal());
     ASSERT_TRUE(system->has_autopilot());
 
-    auto telemetry = std::make_shared<Telemetry>(system);
     auto gimbal = std::make_shared<Gimbal>(system);
 
-    telemetry->set_rate_camera_attitude(10.0);
-
-    telemetry->subscribe_camera_attitude_euler(&receive_gimbal_attitude_euler_angles);
+    gimbal->subscribe_attitude(&receive_gimbal_attitude);
 
     EXPECT_EQ(gimbal->take_control(Gimbal::ControlMode::Primary), Gimbal::Result::Success);
 
@@ -75,9 +72,9 @@ TEST(SitlTestGimbal, GimbalMove)
 
 TEST(SitlTestGimbal, GimbalAngles)
 {
-    Mavsdk mavsdk;
+    Mavsdk mavsdk{Mavsdk::Configuration{Mavsdk::ComponentType::GroundStation}};
 
-    ConnectionResult ret = mavsdk.add_udp_connection();
+    ConnectionResult ret = mavsdk.add_any_connection("udpin://0.0.0.0:14540");
     ASSERT_EQ(ret, ConnectionResult::Success);
 
     // Wait for system to connect via heartbeat.
@@ -127,9 +124,9 @@ TEST(SitlTestGimbal, GimbalAngles)
 
 TEST(SitlTestGimbal, GimbalTakeoffAndMove)
 {
-    Mavsdk mavsdk;
+    Mavsdk mavsdk{Mavsdk::Configuration{Mavsdk::ComponentType::GroundStation}};
 
-    ConnectionResult ret = mavsdk.add_udp_connection();
+    ConnectionResult ret = mavsdk.add_any_connection("udpin://0.0.0.0:14540");
     ASSERT_EQ(ret, ConnectionResult::Success);
 
     // Wait for system to connect via heartbeat.
@@ -158,9 +155,7 @@ TEST(SitlTestGimbal, GimbalTakeoffAndMove)
     action_result = action->takeoff();
     EXPECT_EQ(action_result, Action::Result::Success);
 
-    telemetry->set_rate_camera_attitude(10.0);
-
-    telemetry->subscribe_camera_attitude_euler(&receive_gimbal_attitude_euler_angles);
+    gimbal->subscribe_attitude(&receive_gimbal_attitude);
 
     std::this_thread::sleep_for(std::chrono::seconds(3));
 
@@ -243,9 +238,9 @@ void gimbal_pattern(std::shared_ptr<Gimbal> gimbal)
 
 TEST(SitlTestGimbal, GimbalROIOffboard)
 {
-    Mavsdk mavsdk;
+    Mavsdk mavsdk{Mavsdk::Configuration{Mavsdk::ComponentType::GroundStation}};
 
-    ConnectionResult ret = mavsdk.add_udp_connection();
+    ConnectionResult ret = mavsdk.add_any_connection("udpin://0.0.0.0:14540");
     ASSERT_EQ(ret, ConnectionResult::Success);
 
     // Wait for system to connect via heartbeat.
@@ -286,9 +281,7 @@ TEST(SitlTestGimbal, GimbalROIOffboard)
 
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
-    telemetry->set_rate_camera_attitude(10.0);
-
-    telemetry->subscribe_camera_attitude_euler(&receive_gimbal_attitude_euler_angles);
+    gimbal->subscribe_attitude(&receive_gimbal_attitude);
 
     // Send it once before starting offboard, otherwise it will be rejected.
     Offboard::VelocityNedYaw still;
@@ -353,8 +346,12 @@ void receive_gimbal_result(Gimbal::Result result)
     EXPECT_EQ(result, Gimbal::Result::Success);
 }
 
-void receive_gimbal_attitude_euler_angles(Telemetry::EulerAngle euler_angle)
+void receive_gimbal_attitude(Gimbal::Attitude attitude)
 {
-    UNUSED(euler_angle);
-    LogInfo() << "Received gimbal attitude: " << euler_angle;
+    std::cout << "Gimbal angle pitch: " << attitude.euler_angle_forward.pitch_deg
+              << " deg, yaw: " << attitude.euler_angle_forward.yaw_deg
+              << " yaw (relative to forward)\n";
+    std::cout << "Gimbal angle pitch: " << attitude.euler_angle_north.pitch_deg
+              << " deg, yaw: " << attitude.euler_angle_north.yaw_deg
+              << " yaw (relative to North)\n";
 }

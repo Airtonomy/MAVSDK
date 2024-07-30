@@ -59,6 +59,29 @@ public:
     ~Ftp() override;
 
     /**
+     * @brief
+     */
+    struct ListDirectoryData {
+        std::vector<std::string> dirs{}; /**< @brief The found directories. */
+        std::vector<std::string> files{}; /**< @brief The found files. */
+    };
+
+    /**
+     * @brief Equal operator to compare two `Ftp::ListDirectoryData` objects.
+     *
+     * @return `true` if items are equal.
+     */
+    friend bool operator==(const Ftp::ListDirectoryData& lhs, const Ftp::ListDirectoryData& rhs);
+
+    /**
+     * @brief Stream operator to print information about a `Ftp::ListDirectoryData`.
+     *
+     * @return A reference to the stream.
+     */
+    friend std::ostream&
+    operator<<(std::ostream& str, Ftp::ListDirectoryData const& list_directory_data);
+
+    /**
      * @brief Progress data type for file transfer.
      */
     struct ProgressData {
@@ -112,13 +135,6 @@ public:
     using ResultCallback = std::function<void(Result)>;
 
     /**
-     * @brief Resets FTP server in case there are stale open sessions.
-     *
-     * This function is non-blocking.
-     */
-    void reset_async(const ResultCallback callback);
-
-    /**
      * @brief Callback type for download_async.
      */
     using DownloadCallback = std::function<void(Result, ProgressData)>;
@@ -127,7 +143,10 @@ public:
      * @brief Downloads a file to local directory.
      */
     void download_async(
-        std::string remote_file_path, std::string local_dir, const DownloadCallback& callback);
+        std::string remote_file_path,
+        std::string local_dir,
+        bool use_burst,
+        const DownloadCallback& callback);
 
     /**
      * @brief Callback type for upload_async.
@@ -143,7 +162,7 @@ public:
     /**
      * @brief Callback type for list_directory_async.
      */
-    using ListDirectoryCallback = std::function<void(Result, std::vector<std::string>)>;
+    using ListDirectoryCallback = std::function<void(Result, ListDirectoryData)>;
 
     /**
      * @brief Lists items from a remote directory.
@@ -159,7 +178,7 @@ public:
      *
      * @return Result of request.
      */
-    std::pair<Result, std::vector<std::string>> list_directory(std::string remote_dir) const;
+    std::pair<Result, Ftp::ListDirectoryData> list_directory(std::string remote_dir) const;
 
     /**
      * @brief Creates a remote directory.
@@ -252,15 +271,6 @@ public:
     are_files_identical(std::string local_file_path, std::string remote_file_path) const;
 
     /**
-     * @brief Set root directory for MAVLink FTP server.
-     *
-     * This function is blocking.
-     *
-     * @return Result of request.
-     */
-    Result set_root_directory(std::string root_dir) const;
-
-    /**
      * @brief Set target component ID. By default it is the autopilot.
      *
      * This function is blocking.
@@ -268,15 +278,6 @@ public:
      * @return Result of request.
      */
     Result set_target_compid(uint32_t compid) const;
-
-    /**
-     * @brief Get our own component ID.
-     *
-     * This function is blocking.
-     *
-     * @return Result of request.
-     */
-    uint32_t get_our_compid() const;
 
     /**
      * @brief Copy constructor.

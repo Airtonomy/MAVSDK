@@ -62,6 +62,16 @@ Action::Result ActionImpl::arm() const
     return fut.get();
 }
 
+Action::Result ActionImpl::arm_force() const
+{
+    auto prom = std::promise<Action::Result>();
+    auto fut = prom.get_future();
+
+    arm_force_async([&prom](Action::Result result) { prom.set_value(result); });
+
+    return fut.get();
+}
+
 Action::Result ActionImpl::disarm() const
 {
     auto prom = std::promise<Action::Result>();
@@ -257,7 +267,7 @@ void ActionImpl::arm_async(const Action::ResultCallback& callback) const
 
 bool ActionImpl::need_hold_before_arm() const
 {
-    if (_system_impl->autopilot() == SystemImpl::Autopilot::Px4) {
+    if (_system_impl->autopilot() == Autopilot::Px4) {
         return need_hold_before_arm_px4();
     } else {
         return need_hold_before_arm_apm();
@@ -283,6 +293,21 @@ bool ActionImpl::need_hold_before_arm_apm() const
     } else {
         return false;
     }
+}
+
+void ActionImpl::arm_force_async(const Action::ResultCallback& callback) const
+{
+    MavlinkCommandSender::CommandLong command{};
+
+    command.command = MAV_CMD_COMPONENT_ARM_DISARM;
+    command.params.maybe_param1 = 0.0f; // arm
+    command.params.maybe_param2 = 21196.f; // magic number to force
+    command.target_component_id = _system_impl->get_autopilot_id();
+
+    _system_impl->send_command_async(
+        command, [this, callback](MavlinkCommandSender::Result result, float) {
+            command_result_callback(result, callback);
+        });
 }
 
 void ActionImpl::disarm_async(const Action::ResultCallback& callback) const
@@ -364,7 +389,7 @@ void ActionImpl::shutdown_async(const Action::ResultCallback& callback) const
 
 void ActionImpl::takeoff_async(const Action::ResultCallback& callback) const
 {
-    if (_system_impl->autopilot() == SystemImpl::Autopilot::Px4) {
+    if (_system_impl->autopilot() == Autopilot::Px4) {
         takeoff_async_px4(callback);
     } else {
         takeoff_async_apm(callback);
@@ -407,8 +432,9 @@ void ActionImpl::takeoff_async_apm(const Action::ResultCallback& callback) const
                     if (callback) {
                         callback(action_result);
                     }
+                } else {
+                    send_takeoff_command();
                 }
-                send_takeoff_command();
             });
     } else {
         send_takeoff_command();
@@ -450,21 +476,27 @@ void ActionImpl::goto_location_async(
 
             command.command = MAV_CMD_DO_REPOSITION;
             command.target_component_id = _system_impl->get_autopilot_id();
+            command.frame = MAV_FRAME_GLOBAL_INT;
             command.params.maybe_param4 = static_cast<float>(to_rad_from_deg(yaw_deg));
             command.params.x = int32_t(std::round(latitude_deg * 1e7));
             command.params.y = int32_t(std::round(longitude_deg * 1e7));
             command.params.maybe_z = altitude_amsl_m;
+            command.params.maybe_param2 = static_cast<float>(MAV_DO_REPOSITION_FLAGS_CHANGE_MODE);
 
             _system_impl->send_command_async(
                 command, [this, callback](MavlinkCommandSender::Result result, float) {
                     command_result_callback(result, callback);
                 });
         };
-
-    // Change to Hold mode first
-    if (_system_impl->get_flight_mode() != FlightMode::Hold) {
+    FlightMode goto_flight_mode;
+    if (_system_impl->autopilot() == Autopilot::Px4) {
+        goto_flight_mode = FlightMode::Hold;
+    } else {
+        goto_flight_mode = FlightMode::Offboard;
+    }
+    if (_system_impl->get_flight_mode() != goto_flight_mode) {
         _system_impl->set_flight_mode_async(
-            FlightMode::Hold,
+            goto_flight_mode,
             [this, callback, send_do_reposition](MavlinkCommandSender::Result result, float) {
                 Action::Result action_result = action_result_from_command_result(result);
                 if (action_result != Action::Result::Success) {
@@ -517,31 +549,46 @@ void ActionImpl::set_actuator_async(
     const int index, const float value, const Action::ResultCallback& callback)
 {
     MavlinkCommandSender::CommandLong command{};
-
-    command.command = MAV_CMD_DO_SET_ACTUATOR;
     command.target_component_id = _system_impl->get_autopilot_id();
 
-    switch (index % 6) {
-        case 1:
-            command.params.maybe_param1 = value;
-            break;
-        case 2:
-            command.params.maybe_param2 = value;
-            break;
-        case 3:
-            command.params.maybe_param3 = value;
-            break;
-        case 4:
-            command.params.maybe_param4 = value;
-            break;
-        case 5:
-            command.params.maybe_param5 = value;
-            break;
-        case 6:
-            command.params.maybe_param6 = value;
-            break;
+    if (_system_impl->autopilot() == Autopilot::ArduPilot) {
+        command.command = MAV_CMD_DO_SET_SERVO;
+        command.params.maybe_param1 = static_cast<float>(index);
+        command.params.maybe_param2 = value;
+    } else {
+        auto zero_based_index = index - 1;
+        if (zero_based_index >= 0) {
+            command.command = MAV_CMD_DO_SET_ACTUATOR;
+            switch (zero_based_index % 6) {
+                case 0:
+                    command.params.maybe_param1 = value;
+                    break;
+                case 1:
+                    command.params.maybe_param2 = value;
+                    break;
+                case 2:
+                    command.params.maybe_param3 = value;
+                    break;
+                case 3:
+                    command.params.maybe_param4 = value;
+                    break;
+                case 4:
+                    command.params.maybe_param5 = value;
+                    break;
+                case 5:
+                    command.params.maybe_param6 = value;
+                    break;
+            }
+            command.params.maybe_param7 = static_cast<float>(zero_based_index / 6);
+        } else {
+            if (callback) {
+                _system_impl->call_user_callback([temp_callback = callback]() {
+                    temp_callback(Action::Result::InvalidArgument);
+                });
+            }
+            return;
+        }
     }
-    command.params.maybe_param7 = static_cast<float>(index) / 6.0f;
 
     _system_impl->send_command_async(
         command, [this, callback](MavlinkCommandSender::Result result, float) {
@@ -625,7 +672,7 @@ void ActionImpl::set_takeoff_altitude_async(
 
 Action::Result ActionImpl::set_takeoff_altitude(float relative_altitude_m)
 {
-    if (_system_impl->autopilot() == SystemImpl::Autopilot::Px4) {
+    if (_system_impl->autopilot() == Autopilot::Px4) {
         return set_takeoff_altitude_px4(relative_altitude_m);
     } else {
         return set_takeoff_altitude_apm(relative_altitude_m);
@@ -657,7 +704,7 @@ void ActionImpl::get_takeoff_altitude_async(
 
 std::pair<Action::Result, float> ActionImpl::get_takeoff_altitude() const
 {
-    if (_system_impl->autopilot() == SystemImpl::Autopilot::ArduPilot) {
+    if (_system_impl->autopilot() == Autopilot::ArduPilot) {
         return std::make_pair<>(Action::Result::Success, _takeoff_altitude);
     } else {
         auto result = _system_impl->get_param_float(TAKEOFF_ALT_PARAM);
@@ -784,6 +831,11 @@ Action::Result ActionImpl::action_result_from_command_result(MavlinkCommandSende
 void ActionImpl::command_result_callback(
     MavlinkCommandSender::Result command_result, const Action::ResultCallback& callback) const
 {
+    if (command_result == MavlinkCommandSender::Result::InProgress) {
+        // We only want to return once, so we can't call the callback on progress updates.
+        return;
+    }
+
     Action::Result action_result = action_result_from_command_result(command_result);
 
     if (callback) {

@@ -79,11 +79,17 @@ void MissionRawImpl::process_mission_ack(const mavlink_message_t& message)
         return;
     }
 
-    // We assume that if the vehicle sends an ACCEPTED ack might have received
-    // a new mission. In that case we need to notify our user.
-    std::lock_guard<std::mutex> lock(_mission_changed.mutex);
-    _mission_changed.callbacks.queue(
-        true, [this](const auto& func) { _system_impl->call_user_callback(func); });
+    // We assume that if the vehicle sends an ACCEPTED ack, we might have received
+    // a new mission. In that case we can notify our user.
+    // However, with the (opaque) mission_id, we can determine this properly using
+    // the id. Therefore, we only do the notification if the opaque ID is 0 and
+    // therefore not yet supported. This way we stay backwards compatible with
+    // previous autopilot versions.
+    if (mission_ack.opaque_id == 0) {
+        std::lock_guard<std::mutex> lock(_mission_changed.mutex);
+        _mission_changed.callbacks.queue(
+            true, [this](const auto& func) { _system_impl->call_user_callback(func); });
+    }
 }
 
 void MissionRawImpl::process_mission_current(const mavlink_message_t& message)
@@ -98,6 +104,16 @@ void MissionRawImpl::process_mission_current(const mavlink_message_t& message)
         // so we need to ignore that case.
         if (mission_current.seq != _mission_progress.last_reached) {
             _mission_progress.last.current = mission_current.seq;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(_mission_changed.mutex);
+        if (_mission_changed.last_mission_id != mission_current.mission_id) {
+            _mission_changed.last_mission_id = mission_current.mission_id;
+
+            _mission_changed.callbacks.queue(
+                true, [this](const auto& func) { _system_impl->call_user_callback(func); });
+            LogDebug() << "Mission changed";
         }
     }
 
@@ -134,7 +150,8 @@ void MissionRawImpl::upload_mission_items_async(
     uint8_t type,
     const MissionRaw::ResultCallback& callback)
 {
-    if (_last_upload.lock()) {
+    auto work_item = _last_upload.lock();
+    if (work_item && !work_item->is_done()) {
         _system_impl->call_user_callback([callback]() {
             if (callback) {
                 callback(MissionRaw::Result::Busy);
@@ -147,8 +164,11 @@ void MissionRawImpl::upload_mission_items_async(
 
     const auto int_items = convert_to_int_items(mission_raw);
 
-    _last_upload = _system_impl->mission_transfer().upload_items_async(
-        type, int_items, [this, callback, int_items](MavlinkMissionTransfer::Result result) {
+    _last_upload = _system_impl->mission_transfer_client().upload_items_async(
+        type,
+        _system_impl->get_system_id(),
+        int_items,
+        [this, callback, int_items](MavlinkMissionTransferClient::Result result) {
             auto converted_result = convert_result(result);
             auto converted_items = convert_items(int_items);
             _system_impl->call_user_callback([callback, converted_result, converted_items]() {
@@ -224,7 +244,8 @@ MissionRawImpl::download_mission()
 
 void MissionRawImpl::download_mission_async(const MissionRaw::DownloadMissionCallback& callback)
 {
-    if (_last_download.lock()) {
+    auto work_item = _last_download.lock();
+    if (work_item && !work_item->is_done()) {
         _system_impl->call_user_callback([callback]() {
             if (callback) {
                 std::vector<MissionRaw::MissionItem> empty_items;
@@ -234,11 +255,12 @@ void MissionRawImpl::download_mission_async(const MissionRaw::DownloadMissionCal
         return;
     }
 
-    _last_download = _system_impl->mission_transfer().download_items_async(
+    _last_download = _system_impl->mission_transfer_client().download_items_async(
         MAV_MISSION_TYPE_MISSION,
+        _system_impl->get_system_id(),
         [this, callback](
-            MavlinkMissionTransfer::Result result,
-            std::vector<MavlinkMissionTransfer::ItemInt> items) {
+            MavlinkMissionTransferClient::Result result,
+            std::vector<MavlinkMissionTransferClient::ItemInt> items) {
             auto converted_result = convert_result(result);
             auto converted_items = convert_items(items);
             _system_impl->call_user_callback([callback, converted_result, converted_items]() {
@@ -258,10 +280,10 @@ MissionRaw::Result MissionRawImpl::cancel_mission_download()
     }
 }
 
-MavlinkMissionTransfer::ItemInt
+MavlinkMissionTransferClient::ItemInt
 MissionRawImpl::convert_mission_raw(const MissionRaw::MissionItem transfer_mission_raw)
 {
-    MavlinkMissionTransfer::ItemInt new_item_int;
+    MavlinkMissionTransferClient::ItemInt new_item_int;
 
     new_item_int.seq = transfer_mission_raw.seq;
     new_item_int.frame = transfer_mission_raw.frame;
@@ -280,10 +302,10 @@ MissionRawImpl::convert_mission_raw(const MissionRaw::MissionItem transfer_missi
     return new_item_int;
 }
 
-std::vector<MavlinkMissionTransfer::ItemInt>
+std::vector<MavlinkMissionTransferClient::ItemInt>
 MissionRawImpl::convert_to_int_items(const std::vector<MissionRaw::MissionItem>& mission_raw)
 {
-    std::vector<MavlinkMissionTransfer::ItemInt> int_items;
+    std::vector<MavlinkMissionTransferClient::ItemInt> int_items;
 
     for (const auto& item : mission_raw) {
         int_items.push_back(convert_mission_raw(item));
@@ -296,7 +318,7 @@ MissionRawImpl::convert_to_int_items(const std::vector<MissionRaw::MissionItem>&
 }
 
 MissionRaw::MissionItem
-MissionRawImpl::convert_item(const MavlinkMissionTransfer::ItemInt& transfer_item)
+MissionRawImpl::convert_item(const MavlinkMissionTransferClient::ItemInt& transfer_item)
 {
     MissionRaw::MissionItem new_item;
 
@@ -317,8 +339,8 @@ MissionRawImpl::convert_item(const MavlinkMissionTransfer::ItemInt& transfer_ite
     return new_item;
 }
 
-std::vector<MissionRaw::MissionItem>
-MissionRawImpl::convert_items(const std::vector<MavlinkMissionTransfer::ItemInt>& transfer_items)
+std::vector<MissionRaw::MissionItem> MissionRawImpl::convert_items(
+    const std::vector<MavlinkMissionTransferClient::ItemInt>& transfer_items)
 {
     std::vector<MissionRaw::MissionItem> new_items;
     new_items.reserve(transfer_items.size());
@@ -419,12 +441,14 @@ void MissionRawImpl::clear_mission_async(const MissionRaw::ResultCallback& callb
     reset_mission_progress();
 
     // For ArduPilot to clear a mission we need to upload an empty mission.
-    if (_system_impl->autopilot() == SystemImpl::Autopilot::ArduPilot) {
+    if (_system_impl->autopilot() == Autopilot::ArduPilot) {
         std::vector<MissionRaw::MissionItem> mission_items{empty_item};
         upload_mission_async(mission_items, callback);
     } else {
-        _system_impl->mission_transfer().clear_items_async(
-            MAV_MISSION_TYPE_MISSION, [this, callback](MavlinkMissionTransfer::Result result) {
+        _system_impl->mission_transfer_client().clear_items_async(
+            MAV_MISSION_TYPE_MISSION,
+            _system_impl->get_system_id(),
+            [this, callback](MavlinkMissionTransferClient::Result result) {
                 auto converted_result = convert_result(result);
                 _system_impl->call_user_callback([callback, converted_result]() {
                     if (callback) {
@@ -457,8 +481,10 @@ void MissionRawImpl::set_current_mission_item_async(
         });
     }
 
-    _system_impl->mission_transfer().set_current_item_async(
-        index, [this, callback](MavlinkMissionTransfer::Result result) {
+    _system_impl->mission_transfer_client().set_current_item_async(
+        index,
+        _system_impl->get_system_id(),
+        [this, callback](MavlinkMissionTransferClient::Result result) {
             auto converted_result = convert_result(result);
             _system_impl->call_user_callback([callback, converted_result]() {
                 if (callback) {
@@ -549,38 +575,38 @@ MissionRawImpl::import_qgroundcontrol_mission_from_string(const std::string& qgc
     return MissionImport::parse_json(qgc_plan, _system_impl->autopilot());
 }
 
-MissionRaw::Result MissionRawImpl::convert_result(MavlinkMissionTransfer::Result result)
+MissionRaw::Result MissionRawImpl::convert_result(MavlinkMissionTransferClient::Result result)
 {
     switch (result) {
-        case MavlinkMissionTransfer::Result::Success:
+        case MavlinkMissionTransferClient::Result::Success:
             return MissionRaw::Result::Success;
-        case MavlinkMissionTransfer::Result::ConnectionError:
+        case MavlinkMissionTransferClient::Result::ConnectionError:
             return MissionRaw::Result::Error;
-        case MavlinkMissionTransfer::Result::Denied:
+        case MavlinkMissionTransferClient::Result::Denied:
             return MissionRaw::Result::Denied;
-        case MavlinkMissionTransfer::Result::TooManyMissionItems:
+        case MavlinkMissionTransferClient::Result::TooManyMissionItems:
             return MissionRaw::Result::TooManyMissionItems;
-        case MavlinkMissionTransfer::Result::Timeout:
+        case MavlinkMissionTransferClient::Result::Timeout:
             return MissionRaw::Result::Timeout;
-        case MavlinkMissionTransfer::Result::Unsupported:
+        case MavlinkMissionTransferClient::Result::Unsupported:
             return MissionRaw::Result::Unsupported;
-        case MavlinkMissionTransfer::Result::UnsupportedFrame:
+        case MavlinkMissionTransferClient::Result::UnsupportedFrame:
             return MissionRaw::Result::Unsupported;
-        case MavlinkMissionTransfer::Result::NoMissionAvailable:
+        case MavlinkMissionTransferClient::Result::NoMissionAvailable:
             return MissionRaw::Result::NoMissionAvailable;
-        case MavlinkMissionTransfer::Result::Cancelled:
+        case MavlinkMissionTransferClient::Result::Cancelled:
             return MissionRaw::Result::TransferCancelled;
-        case MavlinkMissionTransfer::Result::MissionTypeNotConsistent:
+        case MavlinkMissionTransferClient::Result::MissionTypeNotConsistent:
             return MissionRaw::Result::MissionTypeNotConsistent;
-        case MavlinkMissionTransfer::Result::InvalidSequence:
+        case MavlinkMissionTransferClient::Result::InvalidSequence:
             return MissionRaw::Result::InvalidSequence;
-        case MavlinkMissionTransfer::Result::CurrentInvalid:
+        case MavlinkMissionTransferClient::Result::CurrentInvalid:
             return MissionRaw::Result::CurrentInvalid;
-        case MavlinkMissionTransfer::Result::ProtocolError:
+        case MavlinkMissionTransferClient::Result::ProtocolError:
             return MissionRaw::Result::ProtocolError;
-        case MavlinkMissionTransfer::Result::InvalidParam:
+        case MavlinkMissionTransferClient::Result::InvalidParam:
             return MissionRaw::Result::InvalidArgument;
-        case MavlinkMissionTransfer::Result::IntMessagesNotSupported:
+        case MavlinkMissionTransferClient::Result::IntMessagesNotSupported:
             return MissionRaw::Result::IntMessagesNotSupported;
         default:
             return MissionRaw::Result::Unknown;

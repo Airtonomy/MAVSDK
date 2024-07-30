@@ -11,10 +11,10 @@ using namespace mavsdk;
 
 TEST(HardwareTest, LogFiles)
 {
-    Mavsdk mavsdk;
+    Mavsdk mavsdk{Mavsdk::Configuration{Mavsdk::ComponentType::GroundStation}};
 
     // ConnectionResult ret = mavsdk.add_serial_connection("/dev/ttyACM0");
-    ConnectionResult ret = mavsdk.add_udp_connection();
+    ConnectionResult ret = mavsdk.add_any_connection("udpin://0.0.0.0:14540");
     ASSERT_EQ(ret, ConnectionResult::Success);
 
     std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -66,10 +66,10 @@ TEST(HardwareTest, LogFiles)
 
 TEST(HardwareTest, LogFilesDownloadFailsIfPathIsDirectory)
 {
-    Mavsdk mavsdk;
+    Mavsdk mavsdk{Mavsdk::Configuration{Mavsdk::ComponentType::GroundStation}};
 
     // ConnectionResult ret = mavsdk.add_serial_connection("/dev/ttyACM0");
-    ConnectionResult ret = mavsdk.add_udp_connection();
+    ConnectionResult ret = mavsdk.add_any_connection("udpin://0.0.0.0:14540");
     ASSERT_EQ(ret, ConnectionResult::Success);
 
     std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -122,10 +122,10 @@ TEST(HardwareTest, LogFilesDownloadFailsIfPathIsDirectory)
 
 TEST(HardwareTest, LogFilesDownloadFailsIfFileAlreadyExists)
 {
-    Mavsdk mavsdk;
+    Mavsdk mavsdk{Mavsdk::Configuration{Mavsdk::ComponentType::GroundStation}};
 
     // ConnectionResult ret = mavsdk.add_serial_connection("/dev/ttyACM0");
-    ConnectionResult ret = mavsdk.add_udp_connection();
+    ConnectionResult ret = mavsdk.add_any_connection("udpin://0.0.0.0:14540");
     ASSERT_EQ(ret, ConnectionResult::Success);
 
     std::this_thread::sleep_for(std::chrono::seconds(2));

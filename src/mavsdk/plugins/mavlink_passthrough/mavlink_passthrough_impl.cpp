@@ -1,5 +1,6 @@
 #include <functional>
 #include "mavlink_passthrough_impl.h"
+#include "plugins/mavlink_passthrough/mavlink_passthrough.h"
 #include "system.h"
 #include "callback_list.tpp"
 
@@ -41,6 +42,13 @@ MavlinkPassthrough::Result MavlinkPassthroughImpl::send_message(mavlink_message_
         return MavlinkPassthrough::Result::ConnectionError;
     }
     return MavlinkPassthrough::Result::Success;
+}
+
+MavlinkPassthrough::Result MavlinkPassthroughImpl::queue_message(
+    std::function<mavlink_message_t(MavlinkAddress mavlink_address, uint8_t channel)> fun)
+{
+    return _system_impl->queue_message(fun) ? MavlinkPassthrough::Result::Success :
+                                              MavlinkPassthrough::Result::ConnectionError;
 }
 
 MavlinkPassthrough::Result
@@ -199,12 +207,12 @@ MavlinkPassthrough::MessageHandle MavlinkPassthroughImpl::subscribe_message(
     return _message_subscriptions[message_id].subscribe(callback);
 }
 
-void MavlinkPassthroughImpl::unsubscribe_message(MavlinkPassthrough::MessageHandle handle)
+void MavlinkPassthroughImpl::unsubscribe_message(
+    uint16_t message_id, MavlinkPassthrough::MessageHandle handle)
 {
-    // We don't know which subscription holds the handle, so we have to go
-    // through all of them.
-    for (auto& subscription : _message_subscriptions) {
-        subscription.second.unsubscribe(handle);
+    auto it = _message_subscriptions.find(message_id);
+    if (it != _message_subscriptions.end()) {
+        it->second.unsubscribe(handle);
     }
 }
 

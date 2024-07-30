@@ -2,6 +2,7 @@
 #include "mavsdk_impl.h"
 #include "mavlink_include.h"
 #include "system_impl.h"
+#include "server_component_impl.h"
 #include "plugin_impl_base.h"
 #include "px4_custom_mode.h"
 #include "ardupilot_custom_mode.h"
@@ -20,20 +21,21 @@ template class CallbackList<bool>;
 template class CallbackList<System::ComponentType>;
 template class CallbackList<System::ComponentType, uint8_t>;
 
-SystemImpl::SystemImpl(MavsdkImpl& parent) :
-    Sender(),
-    _mavsdk_impl(parent),
+SystemImpl::SystemImpl(MavsdkImpl& mavsdk_impl) :
+    _mavsdk_impl(mavsdk_impl),
     _command_sender(*this),
     _timesync(*this),
     _ping(*this),
-    _mission_transfer(
-        *this,
-        _mavsdk_impl.mavlink_message_handler,
+    _mission_transfer_client(
+        _mavsdk_impl.default_server_component_impl().sender(),
+        _mavlink_message_handler,
         _mavsdk_impl.timeout_handler,
-        [this]() { return timeout_s(); }),
+        [this]() { return timeout_s(); },
+        [this]() { return autopilot(); }),
     _request_message(
-        *this, _command_sender, _mavsdk_impl.mavlink_message_handler, _mavsdk_impl.timeout_handler),
-    _mavlink_ftp(*this)
+        *this, _command_sender, _mavlink_message_handler, _mavsdk_impl.timeout_handler),
+    _mavlink_ftp_client(*this),
+    _mavlink_component_metadata(*this)
 {
     _system_thread = new std::thread(&SystemImpl::system_thread, this);
 }
@@ -41,7 +43,7 @@ SystemImpl::SystemImpl(MavsdkImpl& parent) :
 SystemImpl::~SystemImpl()
 {
     _should_exit = true;
-    _mavsdk_impl.mavlink_message_handler.unregister_all(this);
+    _mavlink_message_handler.unregister_all(this);
 
     unregister_timeout_handler(_heartbeat_timeout_cookie);
 
@@ -58,35 +60,20 @@ void SystemImpl::init(uint8_t system_id, uint8_t comp_id)
     // We use this as a default.
     _target_address.component_id = MAV_COMP_ID_AUTOPILOT1;
 
-    _mavsdk_impl.mavlink_message_handler.register_one(
+    _mavlink_message_handler.register_one(
         MAVLINK_MSG_ID_HEARTBEAT,
         [this](const mavlink_message_t& message) { process_heartbeat(message); },
         this);
 
-    _mavsdk_impl.mavlink_message_handler.register_one(
+    _mavlink_message_handler.register_one(
         MAVLINK_MSG_ID_STATUSTEXT,
         [this](const mavlink_message_t& message) { process_statustext(message); },
         this);
 
-    _mavsdk_impl.mavlink_message_handler.register_one(
+    _mavlink_message_handler.register_one(
         MAVLINK_MSG_ID_AUTOPILOT_VERSION,
         [this](const mavlink_message_t& message) { process_autopilot_version(message); },
         this);
-
-    // register_mavlink_command_handler(
-    //    MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES,
-    //    [this](const MavlinkCommandReceiver::CommandLong& command) {
-    //        return process_autopilot_version_request(command);
-    //    },
-    //    this);
-
-    //// TO-DO!
-    // register_mavlink_command_handler(
-    //    MAV_CMD_REQUEST_MESSAGE,
-    //    [this](const MavlinkCommandReceiver::CommandLong& command) {
-    //        return make_command_ack_message(command, MAV_RESULT::MAV_RESULT_UNSUPPORTED);
-    //    },
-    //    this);
 
     add_new_component(comp_id);
 }
@@ -97,45 +84,48 @@ bool SystemImpl::is_connected() const
 }
 
 void SystemImpl::register_mavlink_message_handler(
-    uint16_t msg_id, const MavlinkMessageHandler& callback, const void* cookie)
+    uint16_t msg_id, const MavlinkMessageHandler::Callback& callback, const void* cookie)
 {
-    _mavsdk_impl.mavlink_message_handler.register_one(msg_id, callback, cookie);
+    _mavlink_message_handler.register_one(msg_id, callback, cookie);
 }
 
-void SystemImpl::register_mavlink_message_handler(
-    uint16_t msg_id, uint8_t cmp_id, const MavlinkMessageHandler& callback, const void* cookie)
+void SystemImpl::register_mavlink_message_handler_with_compid(
+    uint16_t msg_id,
+    uint8_t component_id,
+    const MavlinkMessageHandler::Callback& callback,
+    const void* cookie)
 {
-    _mavsdk_impl.mavlink_message_handler.register_one(msg_id, cmp_id, callback, cookie);
+    _mavlink_message_handler.register_one_with_component_id(msg_id, component_id, callback, cookie);
 }
 
 void SystemImpl::unregister_mavlink_message_handler(uint16_t msg_id, const void* cookie)
 {
-    _mavsdk_impl.mavlink_message_handler.unregister_one(msg_id, cookie);
+    _mavlink_message_handler.unregister_one(msg_id, cookie);
 }
 
 void SystemImpl::unregister_all_mavlink_message_handlers(const void* cookie)
 {
-    _mavsdk_impl.mavlink_message_handler.unregister_all(cookie);
+    _mavlink_message_handler.unregister_all(cookie);
 }
 
-void SystemImpl::update_componentid_messages_handler(
-    uint16_t msg_id, uint8_t cmp_id, const void* cookie)
+void SystemImpl::update_component_id_messages_handler(
+    uint16_t msg_id, uint8_t component_id, const void* cookie)
 {
-    _mavsdk_impl.mavlink_message_handler.update_component_id(msg_id, cmp_id, cookie);
+    _mavlink_message_handler.update_component_id(msg_id, component_id, cookie);
 }
 
-void SystemImpl::register_timeout_handler(
-    const std::function<void()>& callback, double duration_s, void** cookie)
+TimeoutHandler::Cookie
+SystemImpl::register_timeout_handler(const std::function<void()>& callback, double duration_s)
 {
-    _mavsdk_impl.timeout_handler.add(callback, duration_s, cookie);
+    return _mavsdk_impl.timeout_handler.add(callback, duration_s);
 }
 
-void SystemImpl::refresh_timeout_handler(const void* cookie)
+void SystemImpl::refresh_timeout_handler(TimeoutHandler::Cookie cookie)
 {
     _mavsdk_impl.timeout_handler.refresh(cookie);
 }
 
-void SystemImpl::unregister_timeout_handler(const void* cookie)
+void SystemImpl::unregister_timeout_handler(TimeoutHandler::Cookie cookie)
 {
     _mavsdk_impl.timeout_handler.remove(cookie);
 }
@@ -162,23 +152,29 @@ void SystemImpl::unsubscribe_is_connected(System::IsConnectedHandle handle)
     _is_connected_callbacks.unsubscribe(handle);
 }
 
-void SystemImpl::add_call_every(std::function<void()> callback, float interval_s, void** cookie)
+void SystemImpl::process_mavlink_message(mavlink_message_t& message)
 {
-    _mavsdk_impl.call_every_handler.add(
-        std::move(callback), static_cast<double>(interval_s), cookie);
+    _mavlink_message_handler.process_message(message);
 }
 
-void SystemImpl::change_call_every(float interval_s, const void* cookie)
+CallEveryHandler::Cookie
+SystemImpl::add_call_every(std::function<void()> callback, float interval_s)
+{
+    return _mavsdk_impl.call_every_handler.add(
+        std::move(callback), static_cast<double>(interval_s));
+}
+
+void SystemImpl::change_call_every(float interval_s, CallEveryHandler::Cookie cookie)
 {
     _mavsdk_impl.call_every_handler.change(static_cast<double>(interval_s), cookie);
 }
 
-void SystemImpl::reset_call_every(const void* cookie)
+void SystemImpl::reset_call_every(CallEveryHandler::Cookie cookie)
 {
     _mavsdk_impl.call_every_handler.reset(cookie);
 }
 
-void SystemImpl::remove_call_every(const void* cookie)
+void SystemImpl::remove_call_every(CallEveryHandler::Cookie cookie)
 {
     _mavsdk_impl.call_every_handler.remove(cookie);
 }
@@ -261,7 +257,7 @@ void SystemImpl::process_autopilot_version(const mavlink_message_t& message)
     mavlink_autopilot_version_t autopilot_version;
     mavlink_msg_autopilot_version_decode(&message, &autopilot_version);
 
-    _mission_transfer.set_int_messages_supported(
+    _mission_transfer_client.set_int_messages_supported(
         autopilot_version.capabilities & MAV_PROTOCOL_CAPABILITY_MISSION_INT);
 }
 
@@ -284,10 +280,11 @@ void SystemImpl::system_thread()
         }
         _command_sender.do_work();
         _timesync.do_work();
-        _mission_transfer.do_work();
+        _mission_transfer_client.do_work();
+        _mavlink_ftp_client.do_work();
 
         if (_mavsdk_impl.time.elapsed_since_s(last_ping_time) >= SystemImpl::_ping_interval_s) {
-            if (_connected) {
+            if (_connected && _autopilot != Autopilot::ArduPilot) {
                 _ping.run_once();
             }
             last_ping_time = _mavsdk_impl.time.steady_time();
@@ -302,17 +299,6 @@ void SystemImpl::system_thread()
         }
     }
 }
-
-// std::optional<mavlink_message_t>
-// SystemImpl::process_autopilot_version_request(const MavlinkCommandReceiver::CommandLong& command)
-//{
-//    if (_should_send_autopilot_version) {
-//        send_autopilot_version();
-//        return make_command_ack_message(command, MAV_RESULT::MAV_RESULT_ACCEPTED);
-//    }
-//
-//    return {};
-//}
 
 std::string SystemImpl::component_name(uint8_t component_id)
 {
@@ -335,6 +321,8 @@ std::string SystemImpl::component_name(uint8_t component_id)
             return "Gimbal";
         case MAV_COMP_ID_MISSIONPLANNER:
             return "Ground station";
+        case MAV_COMP_ID_ONBOARD_COMPUTER:
+            return "Companion Computer";
         case MAV_COMP_ID_WINCH:
             return "Winch";
         default:
@@ -476,23 +464,13 @@ bool SystemImpl::send_message(mavlink_message_t& message)
     return _mavsdk_impl.send_message(message);
 }
 
-void SystemImpl::send_autopilot_version_request()
+bool SystemImpl::queue_message(
+    std::function<mavlink_message_t(MavlinkAddress mavlink_address, uint8_t channel)> fun)
 {
-    auto prom = std::promise<MavlinkCommandSender::Result>();
-    auto fut = prom.get_future();
-
-    send_autopilot_version_request_async(
-        [&prom](MavlinkCommandSender::Result result, float) { prom.set_value(result); });
-
-    if (fut.get() == MavlinkCommandSender::Result::Unsupported) {
-        _old_message_520_supported = false;
-        LogWarn() << "Trying alternative command (512).";
-        send_autopilot_version_request();
-    }
+    return _mavsdk_impl.default_server_component_impl().queue_message(fun);
 }
 
-void SystemImpl::send_autopilot_version_request_async(
-    const MavlinkCommandSender::CommandResultCallback& callback)
+void SystemImpl::send_autopilot_version_request()
 {
     MavlinkCommandSender::CommandLong command{};
     command.target_component_id = get_autopilot_id();
@@ -507,33 +485,17 @@ void SystemImpl::send_autopilot_version_request_async(
         command.params.maybe_param1 = {static_cast<float>(MAVLINK_MSG_ID_AUTOPILOT_VERSION)};
     }
 
-    send_command_async(command, callback);
+    send_command_async(command, [this](MavlinkCommandSender::Result result, float) {
+        receive_autopilot_version_request_ack(result);
+    });
 }
 
-void SystemImpl::send_flight_information_request()
+void SystemImpl::receive_autopilot_version_request_ack(MavlinkCommandSender::Result result)
 {
-    auto prom = std::promise<MavlinkCommandSender::Result>();
-    auto fut = prom.get_future();
-
-    MavlinkCommandSender::CommandLong command{};
-    command.target_component_id = get_autopilot_id();
-
-    if (_old_message_528_supported) {
-        // Note: This MAVLINK message is deprecated and would be removed from MAVSDK in a future
-        // release.
-        command.command = MAV_CMD_REQUEST_FLIGHT_INFORMATION;
-        command.params.maybe_param1 = 1.0f;
-    } else {
-        command.command = MAV_CMD_REQUEST_MESSAGE;
-        command.params.maybe_param1 = {static_cast<float>(MAVLINK_MSG_ID_FLIGHT_INFORMATION)};
-    }
-
-    send_command_async(
-        command, [&prom](MavlinkCommandSender::Result result, float) { prom.set_value(result); });
-    if (fut.get() == MavlinkCommandSender::Result::Unsupported) {
-        _old_message_528_supported = false;
-        LogWarn() << "Trying alternative command (512)..";
-        send_flight_information_request();
+    if (result == MavlinkCommandSender::Result::Unsupported) {
+        _old_message_520_supported = false;
+        LogWarn()
+            << "Trying alternative command REQUEST_MESSAGE instead of REQUEST_AUTOPILOT_CAPABILITIES next.";
     }
 }
 
@@ -550,22 +512,14 @@ void SystemImpl::set_connected()
 
             _connected = true;
 
-            // System with sysid 0 is a bit special: it is a placeholder for a connection initiated
-            // by MAVSDK. As such, it should not be advertised as a newly discovered system.
-            if (static_cast<int>(get_system_id()) != 0) {
-                _mavsdk_impl.notify_on_discover();
-            }
-
             // We call this later to avoid deadlocks on creating the server components.
             _mavsdk_impl.call_user_callback([this]() {
                 // Send a heartbeat back immediately.
                 _mavsdk_impl.start_sending_heartbeats();
             });
 
-            register_timeout_handler(
-                [this] { heartbeats_timed_out(); },
-                HEARTBEAT_TIMEOUT_S,
-                &_heartbeat_timeout_cookie);
+            _heartbeat_timeout_cookie =
+                register_timeout_handler([this] { heartbeats_timed_out(); }, HEARTBEAT_TIMEOUT_S);
 
             enable_needed = true;
 
@@ -577,9 +531,12 @@ void SystemImpl::set_connected()
         }
         // If not yet connected there is nothing to do/
     }
+
     if (enable_needed) {
+        _mavsdk_impl.notify_on_discover();
+
         if (has_autopilot()) {
-            send_autopilot_version_request_async(nullptr);
+            send_autopilot_version_request();
         }
 
         std::lock_guard<std::mutex> lock(_plugin_impls_mutex);
@@ -600,10 +557,10 @@ void SystemImpl::set_disconnected()
         //_heartbeat_timeout_cookie = nullptr;
 
         _connected = false;
-        _mavsdk_impl.notify_on_timeout();
         _is_connected_callbacks.queue(
             false, [this](const auto& func) { _mavsdk_impl.call_user_callback(func); });
     }
+    _mavsdk_impl.notify_on_timeout();
 
     _mavsdk_impl.stop_sending_heartbeats();
 
@@ -986,6 +943,8 @@ ardupilot::PlaneMode SystemImpl::flight_mode_to_ardupilot_plane_mode(FlightMode 
             return ardupilot::PlaneMode::Fbwa;
         case FlightMode::Stabilized:
             return ardupilot::PlaneMode::Stabilize;
+        case FlightMode::Offboard:
+            return ardupilot::PlaneMode::Guided;
         case FlightMode::Unknown:
             return ardupilot::PlaneMode::Unknown;
         default:
@@ -1329,10 +1288,12 @@ MavlinkParameterClient* SystemImpl::param_sender(uint8_t component_id, bool exte
 
     _mavlink_parameter_clients.push_back(
         {std::make_unique<MavlinkParameterClient>(
-             *this,
-             _mavsdk_impl.mavlink_message_handler,
+             _mavsdk_impl.default_server_component_impl().sender(),
+             _mavlink_message_handler,
              _mavsdk_impl.timeout_handler,
              [this]() { return timeout_s(); },
+             [this]() { return autopilot(); },
+             get_system_id(),
              component_id,
              extended),
          component_id,

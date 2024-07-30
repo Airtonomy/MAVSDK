@@ -20,6 +20,12 @@ MavlinkPassthrough::Result MavlinkPassthrough::send_message(mavlink_message_t& m
     return _impl->send_message(message);
 }
 
+MavlinkPassthrough::Result MavlinkPassthrough::queue_message(
+    std::function<mavlink_message_t(MavlinkAddress mavlink_address, uint8_t channel)> fun)
+{
+    return _impl->queue_message(fun);
+}
+
 MavlinkPassthrough::Result MavlinkPassthrough::send_command_int(const CommandInt& command)
 {
     return _impl->send_command_int(command);
@@ -57,9 +63,9 @@ MavlinkPassthrough::subscribe_message(uint16_t message_id, const MessageCallback
     return _impl->subscribe_message(message_id, callback);
 }
 
-void MavlinkPassthrough::unsubscribe_message(MessageHandle handle)
+void MavlinkPassthrough::unsubscribe_message(uint16_t message_id, MessageHandle handle)
 {
-    _impl->unsubscribe_message(handle);
+    _impl->unsubscribe_message(message_id, handle);
 }
 
 std::ostream& operator<<(std::ostream& str, MavlinkPassthrough::Result const& result)

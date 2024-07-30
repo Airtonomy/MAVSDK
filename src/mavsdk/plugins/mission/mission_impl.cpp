@@ -48,8 +48,8 @@ void MissionImpl::init()
 
 void MissionImpl::enable()
 {
-    _system_impl->register_timeout_handler(
-        [this]() { receive_protocol_timeout(); }, 1.0, &_gimbal_protocol_cookie);
+    _gimbal_protocol_cookie =
+        _system_impl->register_timeout_handler([this]() { receive_protocol_timeout(); }, 1.0);
 
     MavlinkCommandSender::CommandLong command{};
     command.command = MAV_CMD_REQUEST_MESSAGE;
@@ -103,7 +103,7 @@ void MissionImpl::process_mission_item_reached(const mavlink_message_t& message)
 void MissionImpl::process_gimbal_manager_information(const mavlink_message_t& message)
 {
     UNUSED(message);
-    if (_gimbal_protocol_cookie != nullptr) {
+    if (_gimbal_protocol == GimbalProtocol::Unknown) {
         LogDebug() << "Using gimbal protocol v2";
         _gimbal_protocol = GimbalProtocol::V2;
         _system_impl->unregister_timeout_handler(_gimbal_protocol_cookie);
@@ -127,7 +127,7 @@ void MissionImpl::receive_protocol_timeout()
 {
     LogDebug() << "Falling back to gimbal protocol v1";
     _gimbal_protocol = GimbalProtocol::V1;
-    _gimbal_protocol_cookie = nullptr;
+    _gimbal_protocol_cookie = {};
 }
 
 Mission::Result MissionImpl::upload_mission(const Mission::MissionPlan& mission_plan)
@@ -156,10 +156,11 @@ void MissionImpl::upload_mission_async(
     wait_for_protocol_async([callback, mission_plan, this]() {
         const auto int_items = convert_to_int_items(mission_plan.mission_items);
 
-        _mission_data.last_upload = _system_impl->mission_transfer().upload_items_async(
+        _mission_data.last_upload = _system_impl->mission_transfer_client().upload_items_async(
             MAV_MISSION_TYPE_MISSION,
+            _system_impl->get_system_id(),
             int_items,
-            [this, callback](MavlinkMissionTransfer::Result result) {
+            [this, callback](MavlinkMissionTransferClient::Result result) {
                 auto converted_result = convert_result(result);
                 _system_impl->call_user_callback([callback, converted_result]() {
                     if (callback) {
@@ -188,10 +189,11 @@ void MissionImpl::upload_mission_with_progress_async(
     wait_for_protocol_async([callback, mission_plan, this]() {
         const auto int_items = convert_to_int_items(mission_plan.mission_items);
 
-        _mission_data.last_upload = _system_impl->mission_transfer().upload_items_async(
+        _mission_data.last_upload = _system_impl->mission_transfer_client().upload_items_async(
             MAV_MISSION_TYPE_MISSION,
+            _system_impl->get_system_id(),
             int_items,
-            [this, callback](MavlinkMissionTransfer::Result result) {
+            [this, callback](MavlinkMissionTransferClient::Result result) {
                 auto converted_result = convert_result(result);
                 _system_impl->call_user_callback([callback, converted_result]() {
                     if (callback) {
@@ -245,11 +247,12 @@ void MissionImpl::download_mission_async(const Mission::DownloadMissionCallback&
         return;
     }
 
-    _mission_data.last_download = _system_impl->mission_transfer().download_items_async(
+    _mission_data.last_download = _system_impl->mission_transfer_client().download_items_async(
         MAV_MISSION_TYPE_MISSION,
+        _system_impl->get_system_id(),
         [this, callback](
-            MavlinkMissionTransfer::Result result,
-            std::vector<MavlinkMissionTransfer::ItemInt> items) {
+            MavlinkMissionTransferClient::Result result,
+            std::vector<MavlinkMissionTransferClient::ItemInt> items) {
             auto result_and_items = convert_to_result_and_mission_items(result, items);
             _system_impl->call_user_callback([callback, result_and_items]() {
                 callback(result_and_items.first, result_and_items.second);
@@ -272,11 +275,12 @@ void MissionImpl::download_mission_with_progress_async(
         return;
     }
 
-    _mission_data.last_download = _system_impl->mission_transfer().download_items_async(
+    _mission_data.last_download = _system_impl->mission_transfer_client().download_items_async(
         MAV_MISSION_TYPE_MISSION,
+        _system_impl->get_system_id(),
         [this, callback](
-            MavlinkMissionTransfer::Result result,
-            const std::vector<MavlinkMissionTransfer::ItemInt>& items) {
+            MavlinkMissionTransferClient::Result result,
+            const std::vector<MavlinkMissionTransferClient::ItemInt>& items) {
             auto result_and_items = convert_to_result_and_mission_items(result, items);
             _system_impl->call_user_callback([callback, result_and_items]() {
                 if (result_and_items.first == Mission::Result::Success) {
@@ -356,10 +360,10 @@ float MissionImpl::acceptance_radius(const MissionItem& item)
     return acceptance_radius_m;
 }
 
-std::vector<MavlinkMissionTransfer::ItemInt>
+std::vector<MavlinkMissionTransferClient::ItemInt>
 MissionImpl::convert_to_int_items(const std::vector<MissionItem>& mission_items)
 {
-    std::vector<MavlinkMissionTransfer::ItemInt> int_items;
+    std::vector<MavlinkMissionTransferClient::ItemInt> int_items;
 
     bool last_position_valid = false; // This flag is to protect us from using an invalid x/y.
 
@@ -381,7 +385,7 @@ MissionImpl::convert_to_int_items(const std::vector<MissionItem>& mission_items)
             float z = item.relative_altitude_m;
             MAV_FRAME frame = MAV_FRAME_GLOBAL_RELATIVE_ALT_INT;
 
-            MavlinkMissionTransfer::ItemInt next_item{
+            MavlinkMissionTransferClient::ItemInt next_item{
                 static_cast<uint16_t>(int_items.size()),
                 (uint8_t)frame,
                 MAV_CMD_NAV_TAKEOFF,
@@ -407,7 +411,7 @@ MissionImpl::convert_to_int_items(const std::vector<MissionItem>& mission_items)
                 const int32_t y = int32_t(std::round(item.longitude_deg * 1e7));
                 const float z = item.relative_altitude_m;
 
-                MavlinkMissionTransfer::ItemInt next_item{
+                MavlinkMissionTransferClient::ItemInt next_item{
                     static_cast<uint16_t>(int_items.size()),
                     static_cast<uint8_t>(MAV_FRAME_GLOBAL_RELATIVE_ALT_INT),
                     static_cast<uint8_t>(MAV_CMD_NAV_WAYPOINT),
@@ -437,7 +441,7 @@ MissionImpl::convert_to_int_items(const std::vector<MissionItem>& mission_items)
 
             uint8_t autocontinue = 1;
 
-            MavlinkMissionTransfer::ItemInt next_item{
+            MavlinkMissionTransferClient::ItemInt next_item{
                 static_cast<uint16_t>(int_items.size()),
                 MAV_FRAME_MISSION,
                 MAV_CMD_DO_CHANGE_SPEED,
@@ -493,7 +497,7 @@ MissionImpl::convert_to_int_items(const std::vector<MissionItem>& mission_items)
 
                 uint8_t autocontinue = 1;
 
-                MavlinkMissionTransfer::ItemInt next_item{
+                MavlinkMissionTransferClient::ItemInt next_item{
                     static_cast<uint16_t>(int_items.size()),
                     MAV_FRAME_MISSION,
                     MAV_CMD_NAV_DELAY,
@@ -526,18 +530,21 @@ MissionImpl::convert_to_int_items(const std::vector<MissionItem>& mission_items)
             float param1 = NAN;
             float param2 = NAN;
             float param3 = NAN;
+            float param4 = NAN;
             switch (item.camera_action) {
                 case CameraAction::TakePhoto:
                     command = MAV_CMD_IMAGE_START_CAPTURE;
                     param1 = 0.0f; // all camera IDs
                     param2 = 0.0f; // no duration, take only one picture
                     param3 = 1.0f; // only take one picture
+                    param4 = 0.0f; // no capture sequence
                     break;
                 case CameraAction::StartPhotoInterval:
                     command = MAV_CMD_IMAGE_START_CAPTURE;
                     param1 = 0.0f; // all camera IDs
                     param2 = item.camera_photo_interval_s;
                     param3 = 0.0f; // unlimited photos
+                    param4 = 0.0f; // no capture sequence
                     break;
                 case CameraAction::StopPhotoInterval:
                     command = MAV_CMD_IMAGE_STOP_CAPTURE;
@@ -546,6 +553,7 @@ MissionImpl::convert_to_int_items(const std::vector<MissionItem>& mission_items)
                 case CameraAction::StartVideo:
                     command = MAV_CMD_VIDEO_START_CAPTURE;
                     param1 = 0.0f; // all camera IDs
+                    param2 = 0.0f; // no status frequency messages to send
                     break;
                 case CameraAction::StopVideo:
                     command = MAV_CMD_VIDEO_STOP_CAPTURE;
@@ -571,7 +579,7 @@ MissionImpl::convert_to_int_items(const std::vector<MissionItem>& mission_items)
                     break;
             }
 
-            MavlinkMissionTransfer::ItemInt next_item{
+            MavlinkMissionTransferClient::ItemInt next_item{
                 static_cast<uint16_t>(int_items.size()),
                 MAV_FRAME_MISSION,
                 command,
@@ -580,7 +588,7 @@ MissionImpl::convert_to_int_items(const std::vector<MissionItem>& mission_items)
                 param1,
                 param2,
                 param3,
-                NAN,
+                param4,
                 0,
                 0,
                 NAN,
@@ -635,7 +643,7 @@ MissionImpl::convert_to_int_items(const std::vector<MissionItem>& mission_items)
                 frame = MAV_FRAME_MISSION;
             }
 
-            MavlinkMissionTransfer::ItemInt next_item{
+            MavlinkMissionTransferClient::ItemInt next_item{
                 static_cast<uint16_t>(int_items.size()),
                 (uint8_t)frame,
                 command,
@@ -667,7 +675,7 @@ MissionImpl::convert_to_int_items(const std::vector<MissionItem>& mission_items)
     }
 
     if (_enable_return_to_launch_after_mission) {
-        MavlinkMissionTransfer::ItemInt next_item{
+        MavlinkMissionTransferClient::ItemInt next_item{
             static_cast<uint16_t>(int_items.size()),
             MAV_FRAME_MISSION,
             MAV_CMD_NAV_RETURN_TO_LAUNCH,
@@ -689,8 +697,8 @@ MissionImpl::convert_to_int_items(const std::vector<MissionItem>& mission_items)
 }
 
 std::pair<Mission::Result, Mission::MissionPlan> MissionImpl::convert_to_result_and_mission_items(
-    MavlinkMissionTransfer::Result result,
-    const std::vector<MavlinkMissionTransfer::ItemInt>& int_items)
+    MavlinkMissionTransferClient::Result result,
+    const std::vector<MavlinkMissionTransferClient::ItemInt>& int_items)
 {
     std::pair<Mission::Result, Mission::MissionPlan> result_pair;
 
@@ -957,8 +965,10 @@ void MissionImpl::clear_mission_async(const Mission::ResultCallback& callback)
 {
     reset_mission_progress();
 
-    _system_impl->mission_transfer().clear_items_async(
-        MAV_MISSION_TYPE_MISSION, [this, callback](MavlinkMissionTransfer::Result result) {
+    _system_impl->mission_transfer_client().clear_items_async(
+        MAV_MISSION_TYPE_MISSION,
+        _system_impl->get_system_id(),
+        [this, callback](MavlinkMissionTransferClient::Result result) {
             auto converted_result = convert_result(result);
             _system_impl->call_user_callback([callback, converted_result]() {
                 if (callback) {
@@ -1009,8 +1019,10 @@ void MissionImpl::set_current_mission_item_async(
         });
     }
 
-    _system_impl->mission_transfer().set_current_item_async(
-        mavlink_index, [this, callback](MavlinkMissionTransfer::Result result) {
+    _system_impl->mission_transfer_client().set_current_item_async(
+        mavlink_index,
+        _system_impl->get_system_id(),
+        [this, callback](MavlinkMissionTransferClient::Result result) {
             auto converted_result = convert_result(result);
             _system_impl->call_user_callback([callback, converted_result]() {
                 if (callback) {
@@ -1147,38 +1159,38 @@ void MissionImpl::unsubscribe_mission_progress(Mission::MissionProgressHandle ha
     _mission_data.mission_progress_callbacks.unsubscribe(handle);
 }
 
-Mission::Result MissionImpl::convert_result(MavlinkMissionTransfer::Result result)
+Mission::Result MissionImpl::convert_result(MavlinkMissionTransferClient::Result result)
 {
     switch (result) {
-        case MavlinkMissionTransfer::Result::Success:
+        case MavlinkMissionTransferClient::Result::Success:
             return Mission::Result::Success;
-        case MavlinkMissionTransfer::Result::ConnectionError:
+        case MavlinkMissionTransferClient::Result::ConnectionError:
             return Mission::Result::Error;
-        case MavlinkMissionTransfer::Result::Denied:
+        case MavlinkMissionTransferClient::Result::Denied:
             return Mission::Result::Denied;
-        case MavlinkMissionTransfer::Result::TooManyMissionItems:
+        case MavlinkMissionTransferClient::Result::TooManyMissionItems:
             return Mission::Result::TooManyMissionItems;
-        case MavlinkMissionTransfer::Result::Timeout:
+        case MavlinkMissionTransferClient::Result::Timeout:
             return Mission::Result::Timeout;
-        case MavlinkMissionTransfer::Result::Unsupported:
+        case MavlinkMissionTransferClient::Result::Unsupported:
             return Mission::Result::Unsupported;
-        case MavlinkMissionTransfer::Result::UnsupportedFrame:
+        case MavlinkMissionTransferClient::Result::UnsupportedFrame:
             return Mission::Result::Unsupported;
-        case MavlinkMissionTransfer::Result::NoMissionAvailable:
+        case MavlinkMissionTransferClient::Result::NoMissionAvailable:
             return Mission::Result::NoMissionAvailable;
-        case MavlinkMissionTransfer::Result::Cancelled:
+        case MavlinkMissionTransferClient::Result::Cancelled:
             return Mission::Result::TransferCancelled;
-        case MavlinkMissionTransfer::Result::MissionTypeNotConsistent:
+        case MavlinkMissionTransferClient::Result::MissionTypeNotConsistent:
             return Mission::Result::Error; // should not happen
-        case MavlinkMissionTransfer::Result::InvalidSequence:
+        case MavlinkMissionTransferClient::Result::InvalidSequence:
             return Mission::Result::Error; // should not happen
-        case MavlinkMissionTransfer::Result::CurrentInvalid:
+        case MavlinkMissionTransferClient::Result::CurrentInvalid:
             return Mission::Result::Error; // should not happen
-        case MavlinkMissionTransfer::Result::ProtocolError:
+        case MavlinkMissionTransferClient::Result::ProtocolError:
             return Mission::Result::ProtocolError;
-        case MavlinkMissionTransfer::Result::InvalidParam:
+        case MavlinkMissionTransferClient::Result::InvalidParam:
             return Mission::Result::InvalidArgument;
-        case MavlinkMissionTransfer::Result::IntMessagesNotSupported:
+        case MavlinkMissionTransferClient::Result::IntMessagesNotSupported:
             return Mission::Result::IntMessagesNotSupported;
         default:
             return Mission::Result::Unknown;
@@ -1186,7 +1198,7 @@ Mission::Result MissionImpl::convert_result(MavlinkMissionTransfer::Result resul
 }
 
 void MissionImpl::add_gimbal_items_v1(
-    std::vector<MavlinkMissionTransfer::ItemInt>& int_items,
+    std::vector<MavlinkMissionTransferClient::ItemInt>& int_items,
     unsigned item_i,
     float pitch_deg,
     float yaw_deg)
@@ -1199,7 +1211,7 @@ void MissionImpl::add_gimbal_items_v1(
 
         uint8_t autocontinue = 1;
 
-        MavlinkMissionTransfer::ItemInt next_item{
+        MavlinkMissionTransferClient::ItemInt next_item{
             static_cast<uint16_t>(int_items.size()),
             MAV_FRAME_MISSION,
             MAV_CMD_DO_MOUNT_CONFIGURE,
@@ -1226,7 +1238,7 @@ void MissionImpl::add_gimbal_items_v1(
 
     uint8_t autocontinue = 1;
 
-    MavlinkMissionTransfer::ItemInt next_item{
+    MavlinkMissionTransferClient::ItemInt next_item{
         static_cast<uint16_t>(int_items.size()),
         MAV_FRAME_MISSION,
         MAV_CMD_DO_MOUNT_CONTROL,
@@ -1246,7 +1258,7 @@ void MissionImpl::add_gimbal_items_v1(
 }
 
 void MissionImpl::add_gimbal_items_v2(
-    std::vector<MavlinkMissionTransfer::ItemInt>& int_items,
+    std::vector<MavlinkMissionTransferClient::ItemInt>& int_items,
     unsigned item_i,
     float pitch_deg,
     float yaw_deg)
@@ -1266,7 +1278,7 @@ void MissionImpl::add_gimbal_items_v2(
     yaw_deg = fmod(yaw_deg, 360.f);
     yaw_deg = yaw_deg > 180.f ? yaw_deg - 360.f : yaw_deg;
 
-    MavlinkMissionTransfer::ItemInt next_item{
+    MavlinkMissionTransferClient::ItemInt next_item{
         static_cast<uint16_t>(int_items.size()),
         MAV_FRAME_MISSION,
         MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW,
@@ -1286,13 +1298,13 @@ void MissionImpl::add_gimbal_items_v2(
 }
 
 void MissionImpl::acquire_gimbal_control_v2(
-    std::vector<MavlinkMissionTransfer::ItemInt>& int_items, unsigned item_i)
+    std::vector<MavlinkMissionTransferClient::ItemInt>& int_items, unsigned item_i)
 {
     uint8_t current = ((int_items.size() == 0) ? 1 : 0);
 
     uint8_t autocontinue = 1;
 
-    MavlinkMissionTransfer::ItemInt next_item{
+    MavlinkMissionTransferClient::ItemInt next_item{
         static_cast<uint16_t>(int_items.size()),
         MAV_FRAME_MISSION,
         MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE,
@@ -1312,13 +1324,13 @@ void MissionImpl::acquire_gimbal_control_v2(
 }
 
 void MissionImpl::release_gimbal_control_v2(
-    std::vector<MavlinkMissionTransfer::ItemInt>& int_items, unsigned item_i)
+    std::vector<MavlinkMissionTransferClient::ItemInt>& int_items, unsigned item_i)
 {
     uint8_t current = ((int_items.size() == 0) ? 1 : 0);
 
     uint8_t autocontinue = 1;
 
-    MavlinkMissionTransfer::ItemInt next_item{
+    MavlinkMissionTransferClient::ItemInt next_item{
         static_cast<uint16_t>(int_items.size()),
         MAV_FRAME_MISSION,
         MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE,

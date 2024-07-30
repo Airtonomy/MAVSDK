@@ -1,4 +1,5 @@
 #include "mavlink_command_sender.h"
+#include "mavlink_address.h"
 #include "system_impl.h"
 #include "unused.h"
 #include <cmath>
@@ -24,7 +25,15 @@ MavlinkCommandSender::MavlinkCommandSender(SystemImpl& system_impl) : _system_im
 
 MavlinkCommandSender::~MavlinkCommandSender()
 {
+    if (_command_debugging) {
+        LogDebug() << "CommandSender destroyed";
+    }
     _system_impl.unregister_all_mavlink_message_handlers(this);
+
+    LockedQueue<Work>::Guard work_queue_guard(_work_queue);
+    for (const auto& work : _work_queue) {
+        _system_impl.unregister_timeout_handler(work->timeout_cookie);
+    }
 }
 
 MavlinkCommandSender::Result
@@ -191,6 +200,9 @@ void MavlinkCommandSender::receive_command_ack(mavlink_message_t message)
             case MAV_RESULT_DENIED:
                 if (_command_debugging) {
                     LogDebug() << "command denied (" << work->identification.command << ").";
+                    if (work->identification.command == 512) {
+                        LogDebug() << "(message " << work->identification.maybe_param1 << ")";
+                    }
                 }
                 _system_impl.unregister_timeout_handler(work->timeout_cookie);
                 temp_result = {Result::Denied, NAN};
@@ -234,16 +246,13 @@ void MavlinkCommandSender::receive_command_ack(mavlink_message_t message)
                 }
                 // If we get a progress update, we can raise the timeout
                 // to something higher because we know the initial command
-                // has arrived. A possible timeout for this case is the initial
-                // timeout * the possible retries because this should match the
-                // case where there is no progress update, and we keep trying.
+                // has arrived.
                 _system_impl.unregister_timeout_handler(work->timeout_cookie);
-                _system_impl.register_timeout_handler(
+                work->timeout_cookie = _system_impl.register_timeout_handler(
                     [this, identification = work->identification] {
                         receive_timeout(identification);
                     },
-                    work->retries_to_do * work->timeout_s,
-                    &work->timeout_cookie);
+                    3.0);
 
                 temp_result = {
                     Result::InProgress, static_cast<float>(command_ack.progress) / 100.0f};
@@ -283,6 +292,9 @@ void MavlinkCommandSender::receive_command_ack(mavlink_message_t message)
 
 void MavlinkCommandSender::receive_timeout(const CommandIdentification& identification)
 {
+    if (_command_debugging) {
+        LogDebug() << "Got timeout!";
+    }
     bool found_command = false;
     CommandResultCallback temp_callback = nullptr;
     std::pair<Result, float> temp_result{Result::UnknownError, NAN};
@@ -314,8 +326,7 @@ void MavlinkCommandSender::receive_timeout(const CommandIdentification& identifi
                 LogWarn() << "Request was for msg ID: " << work->identification.maybe_param1;
             }
 
-            mavlink_message_t message = create_mavlink_message(work->command);
-            if (!_system_impl.send_message(message)) {
+            if (!send_mavlink_message(work->command)) {
                 LogErr() << "connection send error in retransmit (" << work->identification.command
                          << ").";
                 temp_callback = work->callback;
@@ -324,12 +335,11 @@ void MavlinkCommandSender::receive_timeout(const CommandIdentification& identifi
                 break;
             } else {
                 --work->retries_to_do;
-                _system_impl.register_timeout_handler(
+                work->timeout_cookie = _system_impl.register_timeout_handler(
                     [this, identification = work->identification] {
                         receive_timeout(identification);
                     },
-                    work->timeout_s,
-                    &work->timeout_cookie);
+                    work->timeout_s);
             }
         } else {
             // We have tried retransmitting, giving up now.
@@ -388,8 +398,7 @@ void MavlinkCommandSender::do_work()
         work->time_started = _system_impl.get_time().steady_time();
 
         {
-            mavlink_message_t message = create_mavlink_message(work->command);
-            if (!_system_impl.send_message(message)) {
+            if (!send_mavlink_message(work->command)) {
                 LogErr() << "connection send error (" << work->identification.command << ")";
                 // In this case we try again after the timeout. Chances are slim it will work next
                 // time though.
@@ -402,10 +411,9 @@ void MavlinkCommandSender::do_work()
 
         work->already_sent = true;
 
-        _system_impl.register_timeout_handler(
+        work->timeout_cookie = _system_impl.register_timeout_handler(
             [this, identification = work->identification] { receive_timeout(identification); },
-            work->timeout_s,
-            &work->timeout_cookie);
+            work->timeout_s);
     }
 }
 
@@ -423,47 +431,56 @@ void MavlinkCommandSender::call_callback(
         [temp_callback, result, progress]() { temp_callback(result, progress); });
 }
 
-mavlink_message_t MavlinkCommandSender::create_mavlink_message(const Command& command)
+bool MavlinkCommandSender::send_mavlink_message(const Command& command)
 {
-    mavlink_message_t message;
-
     if (auto command_int = std::get_if<CommandInt>(&command)) {
-        mavlink_msg_command_int_pack(
-            _system_impl.get_own_system_id(),
-            _system_impl.get_own_component_id(),
-            &message,
-            command_int->target_system_id,
-            command_int->target_component_id,
-            command_int->frame,
-            command_int->command,
-            command_int->current,
-            command_int->autocontinue,
-            maybe_reserved(command_int->params.maybe_param1),
-            maybe_reserved(command_int->params.maybe_param2),
-            maybe_reserved(command_int->params.maybe_param3),
-            maybe_reserved(command_int->params.maybe_param4),
-            command_int->params.x,
-            command_int->params.y,
-            maybe_reserved(command_int->params.maybe_z));
+        return _system_impl.queue_message([&](MavlinkAddress mavlink_address, uint8_t channel) {
+            mavlink_message_t message;
+            mavlink_msg_command_int_pack_chan(
+                mavlink_address.system_id,
+                mavlink_address.component_id,
+                channel,
+                &message,
+                command_int->target_system_id,
+                command_int->target_component_id,
+                command_int->frame,
+                command_int->command,
+                command_int->current,
+                command_int->autocontinue,
+                maybe_reserved(command_int->params.maybe_param1),
+                maybe_reserved(command_int->params.maybe_param2),
+                maybe_reserved(command_int->params.maybe_param3),
+                maybe_reserved(command_int->params.maybe_param4),
+                command_int->params.x,
+                command_int->params.y,
+                maybe_reserved(command_int->params.maybe_z));
+            return message;
+        });
 
     } else if (auto command_long = std::get_if<CommandLong>(&command)) {
-        mavlink_msg_command_long_pack(
-            _system_impl.get_own_system_id(),
-            _system_impl.get_own_component_id(),
-            &message,
-            command_long->target_system_id,
-            command_long->target_component_id,
-            command_long->command,
-            command_long->confirmation,
-            maybe_reserved(command_long->params.maybe_param1),
-            maybe_reserved(command_long->params.maybe_param2),
-            maybe_reserved(command_long->params.maybe_param3),
-            maybe_reserved(command_long->params.maybe_param4),
-            maybe_reserved(command_long->params.maybe_param5),
-            maybe_reserved(command_long->params.maybe_param6),
-            maybe_reserved(command_long->params.maybe_param7));
+        return _system_impl.queue_message([&](MavlinkAddress mavlink_address, uint8_t channel) {
+            mavlink_message_t message;
+            mavlink_msg_command_long_pack_chan(
+                mavlink_address.system_id,
+                mavlink_address.component_id,
+                channel,
+                &message,
+                command_long->target_system_id,
+                command_long->target_component_id,
+                command_long->command,
+                command_long->confirmation,
+                maybe_reserved(command_long->params.maybe_param1),
+                maybe_reserved(command_long->params.maybe_param2),
+                maybe_reserved(command_long->params.maybe_param3),
+                maybe_reserved(command_long->params.maybe_param4),
+                maybe_reserved(command_long->params.maybe_param5),
+                maybe_reserved(command_long->params.maybe_param6),
+                maybe_reserved(command_long->params.maybe_param7));
+            return message;
+        });
+    } else {
+        return false;
     }
-    return message;
 }
 
 float MavlinkCommandSender::maybe_reserved(const std::optional<float>& maybe_param) const
@@ -472,7 +489,7 @@ float MavlinkCommandSender::maybe_reserved(const std::optional<float>& maybe_par
         return maybe_param.value();
 
     } else {
-        if (_system_impl.autopilot() == SystemImpl::Autopilot::ArduPilot) {
+        if (_system_impl.autopilot() == Autopilot::ArduPilot) {
             return 0.0f;
         } else {
             return NAN;

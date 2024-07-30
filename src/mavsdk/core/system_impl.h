@@ -1,14 +1,18 @@
 #pragma once
 
+#include "autopilot.h"
 #include "callback_list.h"
+#include "mavlink_component_metadata.h"
+#include "call_every_handler.h"
 #include "flight_mode.h"
 #include "mavlink_address.h"
 #include "mavlink_include.h"
 #include "mavlink_parameter_client.h"
 #include "mavlink_command_sender.h"
-#include "mavlink_ftp.h"
+#include "mavlink_command_receiver.h"
+#include "mavlink_ftp_client.h"
 #include "mavlink_message_handler.h"
-#include "mavlink_mission_transfer.h"
+#include "mavlink_mission_transfer_client.h"
 #include "mavlink_request_message_handler.h"
 #include "mavlink_statustext_handler.h"
 #include "request_message.h"
@@ -35,10 +39,10 @@ class PluginImplBase;
 
 // This class is the impl of System. This is to hide the private methods
 // and functionality from the public library API.
-class SystemImpl : public Sender {
+class SystemImpl {
 public:
     explicit SystemImpl(MavsdkImpl& parent);
-    ~SystemImpl() override;
+    ~SystemImpl();
 
     void init(uint8_t system_id, uint8_t comp_id);
 
@@ -47,37 +51,41 @@ public:
     System::IsConnectedHandle subscribe_is_connected(const System::IsConnectedCallback& callback);
     void unsubscribe_is_connected(System::IsConnectedHandle handle);
 
-    // void process_mavlink_message(mavlink_message_t& message);
-
-    using MavlinkMessageHandler = std::function<void(const mavlink_message_t&)>;
+    void process_mavlink_message(mavlink_message_t& message);
 
     void register_mavlink_message_handler(
-        uint16_t msg_id, const MavlinkMessageHandler& callback, const void* cookie);
-    void register_mavlink_message_handler(
-        uint16_t msg_id, uint8_t cmp_id, const MavlinkMessageHandler& callback, const void* cookie);
+        uint16_t msg_id, const MavlinkMessageHandler::Callback& callback, const void* cookie);
+    void register_mavlink_message_handler_with_compid(
+        uint16_t msg_id,
+        uint8_t cmp_id,
+        const MavlinkMessageHandler::Callback& callback,
+        const void* cookie);
 
     void unregister_mavlink_message_handler(uint16_t msg_id, const void* cookie);
     void unregister_all_mavlink_message_handlers(const void* cookie);
 
-    void update_componentid_messages_handler(uint16_t msg_id, uint8_t cmp_id, const void* cookie);
+    void
+    update_component_id_messages_handler(uint16_t msg_id, uint8_t component_id, const void* cookie);
 
-    void register_timeout_handler(
-        const std::function<void()>& callback, double duration_s, void** cookie);
-    void refresh_timeout_handler(const void* cookie);
-    void unregister_timeout_handler(const void* cookie);
+    TimeoutHandler::Cookie
+    register_timeout_handler(const std::function<void()>& callback, double duration_s);
+    void refresh_timeout_handler(TimeoutHandler::Cookie cookie);
+    void unregister_timeout_handler(TimeoutHandler::Cookie cookie);
 
-    void add_call_every(std::function<void()> callback, float interval_s, void** cookie);
-    void change_call_every(float interval_s, const void* cookie);
-    void reset_call_every(const void* cookie);
-    void remove_call_every(const void* cookie);
+    CallEveryHandler::Cookie add_call_every(std::function<void()> callback, float interval_s);
+    void change_call_every(float interval_s, CallEveryHandler::Cookie cookie);
+    void reset_call_every(CallEveryHandler::Cookie cookie);
+    void remove_call_every(CallEveryHandler::Cookie cookie);
 
     void register_statustext_handler(
         std::function<void(const MavlinkStatustextHandler::Statustext&)>, void* cookie);
     void unregister_statustext_handler(void* cookie);
 
-    bool send_message(mavlink_message_t& message) override;
+    bool send_message(mavlink_message_t& message);
+    bool queue_message(
+        std::function<mavlink_message_t(MavlinkAddress mavlink_address, uint8_t channel)> fun);
 
-    Autopilot autopilot() const override { return _autopilot; };
+    Autopilot autopilot() const { return _autopilot; };
 
     using CommandResultCallback = MavlinkCommandSender::CommandResultCallback;
 
@@ -119,13 +127,13 @@ public:
     bool has_camera(int camera_id = -1) const;
     bool has_gimbal() const;
 
-    uint8_t get_system_id() const override;
+    uint8_t get_system_id() const;
     std::vector<uint8_t> component_ids() const;
 
     void set_system_id(uint8_t system_id);
 
-    uint8_t get_own_system_id() const override;
-    uint8_t get_own_component_id() const override;
+    uint8_t get_own_system_id() const;
+    uint8_t get_own_component_id() const;
     uint8_t get_own_mav_type() const;
     MAV_TYPE get_vehicle_type() const;
 
@@ -264,7 +272,7 @@ public:
     bool is_connected() const;
 
     Time& get_time();
-    AutopilotTime& get_autopilot_time() { return _autopilot_time; };
+    AutopilotTime& get_autopilot_time() { return _autopilot_time; }
 
     double get_ping_time_s() const { return _ping.last_ping_time_s(); }
 
@@ -275,15 +283,14 @@ public:
         const std::string& filename, int linenumber, const std::function<void()>& func);
 
     void send_autopilot_version_request();
-    void send_autopilot_version_request_async(
-        const MavlinkCommandSender::CommandResultCallback& callback);
-    void send_flight_information_request();
 
-    MavlinkMissionTransfer& mission_transfer() { return _mission_transfer; };
+    MavlinkMissionTransferClient& mission_transfer_client() { return _mission_transfer_client; }
 
-    MavlinkFtp& mavlink_ftp() { return _mavlink_ftp; };
+    MavlinkFtpClient& mavlink_ftp_client() { return _mavlink_ftp_client; }
 
-    RequestMessage& request_message() { return _request_message; };
+    MavlinkComponentMetadata& component_metadata() { return _mavlink_component_metadata; }
+
+    RequestMessage& request_message() { return _request_message; }
 
     // Non-copyable
     SystemImpl(const SystemImpl&) = delete;
@@ -302,8 +309,7 @@ private:
     void set_connected();
     void set_disconnected();
 
-    std::optional<mavlink_message_t>
-    process_autopilot_version_request(const MavlinkCommandReceiver::CommandLong& command);
+    void receive_autopilot_version_request_ack(MavlinkCommandSender::Result result);
 
     static std::string component_name(uint8_t component_id);
     static System::ComponentType component_type(uint8_t component_id);
@@ -340,9 +346,11 @@ private:
     CallbackList<System::ComponentType> _component_discovered_callbacks{};
     CallbackList<System::ComponentType, uint8_t> _component_discovered_id_callbacks{};
 
-    MAVLinkAddress _target_address{};
+    MavlinkAddress _target_address{};
 
     AutopilotTime _autopilot_time{};
+
+    MavlinkMessageHandler _mavlink_message_handler{};
 
     MavlinkStatustextHandler _statustext_handler{};
 
@@ -370,7 +378,7 @@ private:
     std::mutex _connection_mutex{};
     std::atomic<bool> _connected{false};
     CallbackList<bool> _is_connected_callbacks{};
-    void* _heartbeat_timeout_cookie = nullptr;
+    TimeoutHandler::Cookie _heartbeat_timeout_cookie{};
 
     std::atomic<bool> _autopilot_version_pending{false};
 
@@ -388,9 +396,10 @@ private:
     Timesync _timesync;
     Ping _ping;
 
-    MavlinkMissionTransfer _mission_transfer;
+    MavlinkMissionTransferClient _mission_transfer_client;
     RequestMessage _request_message;
-    MavlinkFtp _mavlink_ftp;
+    MavlinkFtpClient _mavlink_ftp_client;
+    MavlinkComponentMetadata _mavlink_component_metadata;
 
     std::mutex _plugin_impls_mutex{};
     std::vector<PluginImplBase*> _plugin_impls{};
@@ -409,7 +418,6 @@ private:
     std::unordered_map<std::string, std::string> _mavlink_ftp_files{};
 
     bool _old_message_520_supported{true};
-    bool _old_message_528_supported{true};
 };
 
 } // namespace mavsdk

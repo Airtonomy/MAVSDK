@@ -15,6 +15,7 @@
 #include <future>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <vector>
 
@@ -39,6 +40,38 @@ public:
         rpc_ftp_result->set_result_str(ss.str());
 
         response->set_allocated_ftp_result(rpc_ftp_result);
+    }
+
+    static std::unique_ptr<rpc::ftp::ListDirectoryData>
+    translateToRpcListDirectoryData(const mavsdk::Ftp::ListDirectoryData& list_directory_data)
+    {
+        auto rpc_obj = std::make_unique<rpc::ftp::ListDirectoryData>();
+
+        for (const auto& elem : list_directory_data.dirs) {
+            rpc_obj->add_dirs(elem);
+        }
+
+        for (const auto& elem : list_directory_data.files) {
+            rpc_obj->add_files(elem);
+        }
+
+        return rpc_obj;
+    }
+
+    static mavsdk::Ftp::ListDirectoryData
+    translateFromRpcListDirectoryData(const rpc::ftp::ListDirectoryData& list_directory_data)
+    {
+        mavsdk::Ftp::ListDirectoryData obj;
+
+        for (const auto& elem : list_directory_data.dirs()) {
+            obj.dirs.push_back(elem);
+        }
+
+        for (const auto& elem : list_directory_data.files()) {
+            obj.files.push_back(elem);
+        }
+
+        return obj;
     }
 
     static std::unique_ptr<rpc::ftp::ProgressData>
@@ -135,34 +168,6 @@ public:
         }
     }
 
-    grpc::Status Reset(
-        grpc::ServerContext* /* context */,
-        const rpc::ftp::ResetRequest* /* request */,
-        rpc::ftp::ResetResponse* response) override
-    {
-        if (_lazy_plugin.maybe_plugin() == nullptr) {
-            if (response != nullptr) {
-                auto result = mavsdk::Ftp::Result::NoSystem;
-                fillResponseWithResult(response, result);
-            }
-
-            return grpc::Status::OK;
-        }
-
-        std::promise<mavsdk::Ftp::Result> prom;
-        std::future<mavsdk::Ftp::Result> fut = prom.get_future();
-
-        _lazy_plugin.maybe_plugin()->reset_async(
-            [&prom](const mavsdk::Ftp::Result result) { prom.set_value(result); });
-        auto result = fut.get();
-
-        if (response != nullptr) {
-            fillResponseWithResult(response, result);
-        }
-
-        return grpc::Status::OK;
-    }
-
     grpc::Status SubscribeDownload(
         grpc::ServerContext* /* context */,
         const mavsdk::rpc::ftp::SubscribeDownloadRequest* request,
@@ -187,6 +192,7 @@ public:
         _lazy_plugin.maybe_plugin()->download_async(
             request->remote_file_path(),
             request->local_dir(),
+            request->use_burst(),
             [this, &writer, &stream_closed_promise, is_finished, subscribe_mutex](
                 mavsdk::Ftp::Result result, const mavsdk::Ftp::ProgressData download) {
                 rpc::ftp::DownloadResponse rpc_response;
@@ -295,9 +301,7 @@ public:
         if (response != nullptr) {
             fillResponseWithResult(response, result.first);
 
-            for (auto elem : result.second) {
-                response->add_paths(elem);
-            }
+            response->set_allocated_data(translateToRpcListDirectoryData(result.second).release());
         }
 
         return grpc::Status::OK;
@@ -447,34 +451,6 @@ public:
         return grpc::Status::OK;
     }
 
-    grpc::Status SetRootDirectory(
-        grpc::ServerContext* /* context */,
-        const rpc::ftp::SetRootDirectoryRequest* request,
-        rpc::ftp::SetRootDirectoryResponse* response) override
-    {
-        if (_lazy_plugin.maybe_plugin() == nullptr) {
-            if (response != nullptr) {
-                auto result = mavsdk::Ftp::Result::NoSystem;
-                fillResponseWithResult(response, result);
-            }
-
-            return grpc::Status::OK;
-        }
-
-        if (request == nullptr) {
-            LogWarn() << "SetRootDirectory sent with a null request! Ignoring...";
-            return grpc::Status::OK;
-        }
-
-        auto result = _lazy_plugin.maybe_plugin()->set_root_directory(request->root_dir());
-
-        if (response != nullptr) {
-            fillResponseWithResult(response, result);
-        }
-
-        return grpc::Status::OK;
-    }
-
     grpc::Status SetTargetCompid(
         grpc::ServerContext* /* context */,
         const rpc::ftp::SetTargetCompidRequest* request,
@@ -503,27 +479,10 @@ public:
         return grpc::Status::OK;
     }
 
-    grpc::Status GetOurCompid(
-        grpc::ServerContext* /* context */,
-        const rpc::ftp::GetOurCompidRequest* /* request */,
-        rpc::ftp::GetOurCompidResponse* response) override
-    {
-        if (_lazy_plugin.maybe_plugin() == nullptr) {
-            return grpc::Status::OK;
-        }
-
-        auto result = _lazy_plugin.maybe_plugin()->get_our_compid();
-
-        if (response != nullptr) {
-            response->set_compid(result);
-        }
-
-        return grpc::Status::OK;
-    }
-
     void stop()
     {
         _stopped.store(true);
+        std::lock_guard<std::mutex> lock(_stream_stop_mutex);
         for (auto& prom : _stream_stop_promises) {
             if (auto handle = prom.lock()) {
                 handle->set_value();
@@ -540,12 +499,14 @@ private:
                 handle->set_value();
             }
         } else {
+            std::lock_guard<std::mutex> lock(_stream_stop_mutex);
             _stream_stop_promises.push_back(prom);
         }
     }
 
     void unregister_stream_stop_promise(std::shared_ptr<std::promise<void>> prom)
     {
+        std::lock_guard<std::mutex> lock(_stream_stop_mutex);
         for (auto it = _stream_stop_promises.begin(); it != _stream_stop_promises.end();
              /* ++it */) {
             if (it->lock() == prom) {
@@ -559,6 +520,7 @@ private:
     LazyPlugin& _lazy_plugin;
 
     std::atomic<bool> _stopped{false};
+    std::mutex _stream_stop_mutex{};
     std::vector<std::weak_ptr<std::promise<void>>> _stream_stop_promises{};
 };
 
