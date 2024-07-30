@@ -65,12 +65,12 @@ jobs:
             echo ==========================================================
             echo Build With CMake
             echo ==========================================================
-            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "cmake --build build/release --target install -- -j2"
+            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install git apt-transport-https ca-certificates gnupg software-properties-common wget -y && wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | sudo apt-key add - && apt-add-repository 'deb https://apt.kitware.com/ubuntu/ focal main' && apt-get update && apt install cmake -y && cmake --build build/release --target install -- -j2"
 
             echo ==========================================================
             echo Create .deb package
             echo ==========================================================
-            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install build-essential ruby cmake git -y && gem install dotenv -v 2.8.1 -N && gem install clamp -v 1.0.1 -N && gem install mustache -v 0.99.8 -N && gem install cabin insist stud arr-pm backports rexml -N && gem install pleaserun --ignore-dependencies -N && git config --global --add safe.directory /workspace && gem install fpm --ignore-dependencies -N && ./tools/create_packages.sh ./install ./debian $(uname -m | sed s/aarch64/arm64/ | sed s/x86_64/amd64/) libmavsdk-dev thread-${CIRCLE_WORKFLOW_ID}"
+            docker run -v `pwd`:/workspace -w /workspace  << parameters.docker-build-image >> /bin/bash -c "apt-get update && apt-get install git apt-transport-https ca-certificates gnupg software-properties-common wget -y && wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | sudo apt-key add - && apt-add-repository 'deb https://apt.kitware.com/ubuntu/ focal main' && apt-get update && apt install cmake -y && apt-get install build-essential ruby cmake git -y && gem install dotenv -v 2.8.1 -N && gem install clamp -v 1.0.1 -N && gem install mustache -v 0.99.8 -N && gem install cabin insist stud arr-pm backports rexml -N && gem install pleaserun --ignore-dependencies -N && git config --global --add safe.directory /workspace && gem install fpm --ignore-dependencies -N && ./tools/create_packages.sh ./install ./debian $(uname -m | sed s/aarch64/arm64/ | sed s/x86_64/amd64/) libmavsdk-dev thread-${CIRCLE_WORKFLOW_ID}"
 
 
       - store_artifacts:
